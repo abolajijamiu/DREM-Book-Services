@@ -5,9 +5,9 @@ website is built from** — HTML, CSS, JavaScript, JSON/API responses, images,
 fonts, wasm — and, where the site ships source maps, the **original pre-build
 sources** behind its bundles: TypeScript, JSX, Vue/Svelte, SCSS.
 
-| Popup — quick copy and export | DevTools panel — the deep work |
-| --- | --- |
-| ![popup](docs/popup.png) | ![panel](docs/panel.png) |
+| Popup — quick copy and export | Site tab — many pages at once | DevTools panel — the deep work |
+| --- | --- | --- |
+| ![popup](docs/popup.png) | ![site picker](docs/site-picker.png) | ![panel](docs/panel.png) |
 
 ## First, the honest limit
 
@@ -47,8 +47,21 @@ your capture is the site's actual development source.
   snippet still renders when you paste it elsewhere.
 
 **Export**
-- **Export capture (.zip)** — the whole site as the browser sees it, written
+- **Export capture (.zip)** — this page and everything it loads, written
   client-side (no server, no upload).
+
+**Site** — capture *several pages* into one archive:
+- lists the pages this page links to (same site only), the current one first
+- reads the site's `robots.txt` first; pages it disallows are shown greyed with
+  a `robots.txt` tag and cannot be selected
+- **Max pages** defaults to 25; raise it to select more, and the picker refuses
+  to go past whatever it is set to
+- **Find more pages** crawls one level deeper from what you have selected
+- each page's HTML lands in `pages/`, while assets shared between pages are
+  stored **once** in `files/`
+- the page you started from is captured as rendered; the others are captured as
+  served, unless you tick **Run each page's JavaScript**, which loads each one
+  in a background tab so app-rendered content is included
 
 ### DevTools panel — "Source Copier"
 
@@ -67,6 +80,24 @@ icon. Click **Reload & capture** to record a page from its first byte.
   viewer
 
 ## What a capture contains
+
+A site capture:
+
+```
+example.com-2026-09-20/
+├── README.md              pages captured, robots.txt outcome, failures
+├── inventory.json         every page and every resource
+├── pages/
+│   ├── index.html         the page you started from (rendered)
+│   ├── about.html
+│   ├── blog/index.html
+│   └── pages.json         url ↔ file, how it was captured, result
+├── collected.css          every rule in play on the starting page
+├── files/example.com/…    assets, stored once and shared by all pages
+└── src/                   original sources, if the site ships maps
+```
+
+A single-page capture:
 
 ```
 example.com-2026-09-20/
@@ -96,6 +127,8 @@ binary assets.
 | Minified bundles are unreadable | Tokenizer-based formatters that only ever *insert* whitespace — strings, comments, regex literals and template literals are passed through untouched |
 | ZIP without a library | `CompressionStream('deflate-raw')` plus a hand-written central directory |
 | Original sources | `sourceMappingURL` (including inline `data:` maps and index maps with `sections`) → `sourcesContent` → a real folder tree |
+| Which pages may be captured | `robots.txt` parsed per RFC 9309 — user-agent groups, `Allow`/`Disallow`, `*` and `$` patterns, longest-match-wins — consulted before any page is fetched |
+| Pages a fetch cannot render | Optionally loaded in a background tab, read the same way the live page is, then closed |
 
 ## Install (unpacked)
 
@@ -139,6 +172,10 @@ src/
     page-inventory.js     page-side resource inventory   (injected)
     element-inspector.js  page-side element picker       (injected)
     picker.js             picker driver: fetches the CSS the page cannot read
+    site.js               multi-page capture: discovery, crawl, per-page capture
+    robots.js             robots.txt parsing (RFC 9309)
+    html-scan.js          DOMParser-side scanning of fetched pages
+  ui/site-picker.js       the page picker, mounted by both surfaces
     bundle.js             capture pipeline → ZIP
     zip.js                ZIP writer (deflate-raw)
     format.js             JS/CSS/HTML/JSON pretty-printers
@@ -161,6 +198,7 @@ npm install
 npm test                 # unit + e2e
 npm run test:unit        # no browser needed
 npm run test:e2e         # CHROME_PATH=/path/to/chrome to pick a binary
+npm run test:site        # multi-page capture against the fixture site
 npm run test:real -- https://pypi.org/   # drive it against a live site
 ```
 
@@ -179,6 +217,12 @@ panel's `chrome.devtools` host object. Everything below those is shipped code.
 
 `tests/real-site.mjs` runs the same flow against a real URL and prints what it
 got. Two runs, both clean:
+
+Site capture was exercised live too: from `pypi.org`, 11 linked pages were
+offered and **3 were withheld by PyPI's own robots.txt** (`/account/login/`,
+`/account/register/`, `/search/` — its `Disallow: /account/` and `Disallow:
+/search*` rules). Capturing 4 of the remainder produced 348 files with 126
+assets shared across the pages and **zero duplicated**.
 
 **pypi.org** — 3,376 CSS rules collected (295 after "used only"); a 1.88 MB
 archive of 334 files in 10s; **213 original sources recovered** from
@@ -201,6 +245,9 @@ three: 4,701 rules across 9 stylesheets (1,267 used), 94 resources archived
 a captured `.woff2` byte-identical to the server. Next.js ships no production
 source maps, so `src/` is empty — correctly. Anything the sandbox's egress
 policy refused is listed in the archive's own `README.md`.
+
+`SITE_PAGES=4 npm run test:real -- https://pypi.org/` additionally drives a live
+multi-page capture, robots.txt and all.
 
 Live runs need the open internet; behind a TLS-intercepting proxy, pass that
 proxy's CA SPKI hashes via `SPKI_PINS` (see the comment at the top of the

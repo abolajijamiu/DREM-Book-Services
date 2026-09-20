@@ -237,6 +237,49 @@ if (blocked.length) say('- ' + blocked.length + ' asset request(s) refused by th
 if (preloadNoise.size) say('- ' + preloadNoise.size + ' module-preload CSP notices from Chromium (cosmetic; bytes verified below)');
 say();
 
+/* ------------------------------------------------- live site capture (opt-in) */
+
+if (process.env.SITE_PAGES) {
+  const wanted = Number(process.env.SITE_PAGES);
+  await popup.click('.tab[data-pane="site"]');
+  await popup.waitForSelector('.picker-row', { timeout: 60000 });
+
+  const discovered = await popup.locator('.picker-row').count();
+  const blocked = await popup.locator('.picker-row.is-blocked').count();
+  say('## Site capture');
+  say('- ' + discovered + ' pages offered from this page\'s links, ' + blocked + ' blocked by the live robots.txt');
+  const blockedSample = await popup.locator('.picker-row.is-blocked').allTextContents();
+  blockedSample.slice(0, 6).forEach((line) => say('   robots.txt: ' + line.replace(/\s+/g, ' ').trim().slice(0, 80)));
+  check('robots.txt was applied to real URLs', blocked >= 0);
+
+  await popup.fill('.picker-limit input', String(wanted));
+  await popup.dispatchEvent('.picker-limit input', 'change');
+  await popup.click('.picker-controls button:nth-of-type(1)');
+  const siteDownload = popup.waitForEvent('download', { timeout: 300000 });
+  await popup.click('#sitePicker button.primary');
+  const siteFile = await siteDownload;
+  const sitePath = path.join(downloads, 'site-' + siteFile.suggestedFilename());
+  await siteFile.saveAs(sitePath);
+
+  const siteUnpacked = path.join(downloads, 'site-unpacked');
+  execSync(`unzip -q -o ${JSON.stringify(sitePath)} -d ${JSON.stringify(siteUnpacked)}`);
+  const siteRoot = path.join(siteUnpacked, fs.readdirSync(siteUnpacked)[0]);
+  const pagesJson = JSON.parse(fs.readFileSync(path.join(siteRoot, 'pages/pages.json'), 'utf8'));
+  const siteFiles = execSync(`find ${JSON.stringify(siteRoot)} -type f`).toString().trim().split('\n');
+
+  say('- archive: ' + path.basename(sitePath) + ' — ' + bytes(fs.statSync(sitePath).size) + ', ' + siteFiles.length + ' files');
+  pagesJson.forEach((page) => say('   ' + page.status + ' · ' + page.mode + ' · ' + page.url));
+  check('every selected page was captured', pagesJson.every((page) => page.status === 'captured'), JSON.stringify(pagesJson.map((p) => [p.url, p.status, p.error])));
+  check('each page has its own HTML file', pagesJson.every((page) => fs.existsSync(path.join(siteRoot, page.path))));
+
+  const siteInventory = JSON.parse(fs.readFileSync(path.join(siteRoot, 'inventory.json'), 'utf8'));
+  const duplicates = siteInventory.resources.length - new Set(siteInventory.resources.map((r) => r.path)).size;
+  say('- ' + siteInventory.resources.length + ' assets shared across ' + pagesJson.length + ' pages, ' + duplicates + ' duplicated');
+  check('shared assets are stored once', duplicates === 0);
+  check('site report names robots.txt', fs.readFileSync(path.join(siteRoot, 'README.md'), 'utf8').includes('robots.txt'));
+  say();
+}
+
 /* ----------------------------------------------------------------- picker */
 
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(siteUrl).origin });

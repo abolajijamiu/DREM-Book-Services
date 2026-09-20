@@ -14,6 +14,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab is-active" data-pane="copy" role="tab">Copy</button>
       <button class="tab" data-pane="export" role="tab">Export</button>
+      <button class="tab" data-pane="site" role="tab">Site</button>
     </nav>
 
     <section class="pane is-active" id="pane-copy">
@@ -72,6 +73,14 @@
         Keep this popup open while it runs. For long captures — and for XHR/API
         responses — use the <strong>Web Source Copier</strong> panel in DevTools.
       </p>
+    </section>
+
+    <section class="pane" id="pane-site">
+      <p class="hint">
+        Captures several pages of this site into one archive — shared assets stored
+        once. Only same-site links, and only what <code>robots.txt</code> allows.
+      </p>
+      <div id="sitePicker"></div>
     </section>
 
     <section id="status" class="status" role="status">Collecting stylesheets…</section>

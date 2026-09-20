@@ -3,6 +3,8 @@ import { formatByKind, formatHtml } from '../lib/format.js';
 import { extractOriginalSources, findSourceMappingUrl } from '../lib/sourcemap.js';
 import { runPicker } from '../lib/picker.js';
 import { cssCopierRunner } from '../lib/css-collector.js';
+import { mountSitePicker } from '../ui/site-picker.js';
+import { fetchWithTimeout } from '../lib/net.js';
 
 const tabId = chrome.devtools.inspectedWindow.tabId;
 const el = (id) => document.getElementById(id);
@@ -151,6 +153,8 @@ function drawList() {
 const TEXT_KINDS = new Set(['script', 'style', 'document', 'data']);
 
 async function select(record) {
+  el('sitePicker').hidden = true;
+  ui.viewerBody.hidden = false;
   selected = record;
   selectedText = null;
   drawList();
@@ -385,6 +389,40 @@ el('copyHtml').addEventListener('click', async () => {
   } catch (err) {
     setStatus('Could not read the page: ' + err.message, true);
   }
+});
+
+el('captureSite').addEventListener('click', () => {
+  ui.viewerTitle.textContent = 'Capture site';
+  ui.viewerMeta.textContent = 'pick the pages to include in one archive';
+  ui.viewerBody.hidden = true;
+  ui.unmap.hidden = true;
+  ui.copyFile.disabled = true;
+  ui.saveFile.disabled = true;
+  const host = el('sitePicker');
+  host.hidden = false;
+  mountSitePicker({
+    container: host,
+    tabId,
+    setStatus,
+    saveBlob,
+    fetchText: async (url) => {
+      const response = await fetchWithTimeout(url, { credentials: 'omit' }, 15000);
+      return response.ok ? response.text() : null;
+    },
+    getBody: async (url) => {
+      const record = captured.get(url);
+      return record ? await bodyOf(record) : null;
+    },
+    getOptions: () => ({
+      prettyPrint: ui.optPretty.checked,
+      sourceMaps: ui.optSourceMaps.checked,
+      includeAssets: ui.optAssets.checked
+    }),
+    onProgress: ({ done, total }) => {
+      ui.progress.hidden = false;
+      ui.progressBar.style.width = Math.max(2, Math.round((done / Math.max(1, total)) * 100)) + '%';
+    }
+  });
 });
 
 el('reload').addEventListener('click', () => {

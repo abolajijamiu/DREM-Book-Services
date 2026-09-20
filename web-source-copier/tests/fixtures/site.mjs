@@ -32,9 +32,35 @@ const PAGE = (otherPort) => `<!doctype html>
 <img data-src="/never-answers" alt="">
 <div style="color: teal">inline attribute</div>
 <iframe src="/frame.html"></iframe>
+<nav>
+  <a href="/about">About</a>
+  <a href="/contact?ref=nav">Contact</a>
+  <a href="/blog/">Blog index</a>
+  <a href="/private/secret">Secret (robots-disallowed)</a>
+  <a href="/spa">App-rendered page</a>
+  <a href="/about#same-page-anchor">About again (fragment)</a>
+  <a href="https://example.com/external">External site</a>
+  <a href="mailto:someone@example.com">Mail</a>
+</nav>
 <script src="/app.js"></script>
 <script>window.__inline = function(){return 1};</script>
 <script>fetch('/api/items.json').then(r=>r.json()).then(d=>{window.__items=d});</script>
+</body></html>`;
+
+const PAGE_ABOUT = `<!doctype html><html><head><title>About us</title>
+<link rel="stylesheet" href="/site.css"><link rel="stylesheet" href="/page.css"></head>
+<body><h1 class="about-only">ABOUT-PAGE-MARKER</h1><img src="/logo.png" alt=""><a href="/team">Team</a></body></html>`;
+
+const PAGE_CONTACT = `<!doctype html><html><head><title>Contact</title>
+<link rel="stylesheet" href="/site.css"></head><body><h1>CONTACT-PAGE-MARKER</h1></body></html>`;
+
+const PAGE_BLOG = `<!doctype html><html><head><title>Blog</title></head><body>
+<h1>BLOG-INDEX-MARKER</h1><a href="/blog/post-1">Post 1</a></body></html>`;
+
+// Content that only exists once JavaScript has run.
+const PAGE_SPA = `<!doctype html><html><head><title>App page</title></head><body>
+<div id="root">loading…</div>
+<script>document.getElementById('root').textContent = 'RENDERED-BY-JAVASCRIPT';</script>
 </body></html>`;
 
 export function startFixture(mainPort = 8094, otherPort = 8095) {
@@ -51,7 +77,15 @@ export function startFixture(mainPort = 8094, otherPort = 8095) {
     '/app.js.map': ['application/json', SOURCE_MAP],
     '/api/items.json': ['application/json', '{"items":[{"id":1,"name":"from the API"}]}'],
     '/logo.png': ['image/png', ICON],
-    '/favicon.ico': ['image/png', ICON]
+    '/favicon.ico': ['image/png', ICON],
+    '/robots.txt': ['text/plain', 'User-agent: *\nDisallow: /private/\n'],
+    '/about': ['text/html', PAGE_ABOUT],
+    '/contact': ['text/html', PAGE_CONTACT],
+    '/blog/': ['text/html', PAGE_BLOG],
+    '/blog/post-1': ['text/html', '<!doctype html><html><head><title>Post 1</title></head><body><h1>Post one</h1></body></html>'],
+    '/private/secret': ['text/html', '<!doctype html><html><body>SECRET-CONTENT</body></html>'],
+    '/spa': ['text/html', PAGE_SPA],
+    '/page.css': ['text/css', '.about-only{color:seagreen;background:url(/logo.png)}']
   };
 
   const pending = [];

@@ -13,6 +13,9 @@ import { formatJs, formatCss, formatHtml, formatJson } from '../src/lib/format.j
 import { extractOriginalSources, findSourceMappingUrl, normalizeSourcePath } from '../src/lib/sourcemap.js';
 import { kindOf, zipPathForUrl } from '../src/lib/bundle.js';
 import { absolutizeCssUrls } from '../src/lib/picker.js';
+import { parseRobots, rulesFor, isAllowedPath, loadRobots } from '../src/lib/robots.js';
+import { pagePathFor } from '../src/lib/site.js';
+import { normalizePageUrl, cssUrlReferences } from '../src/lib/html-scan.js';
 
 globalThis.atob ||= (b64) => Buffer.from(b64, 'base64').toString('binary');
 
@@ -144,6 +147,56 @@ check('absolute url() is left alone', absolutizeCssUrls('a{background:url(https:
 check('data: url() is left alone', absolutizeCssUrls('a{background:url(data:image/png;base64,AAA)}', base).includes('url(data:image/png;base64,AAA)'));
 check('protocol-relative url() is left alone', absolutizeCssUrls('a{background:url(//x.test/a.png)}', base).includes('url(//x.test/a.png)'));
 check('no base leaves css untouched', absolutizeCssUrls('a{background:url(x.png)}', '') === 'a{background:url(x.png)}');
+
+/* -------------------------------------------------------------- robots */
+
+const robotsTxt = [
+  '# a comment',
+  'User-agent: *',
+  'Disallow: /private/',
+  'Disallow: /tmp',
+  'Allow: /private/public-bit',
+  'Disallow: /*.pdf$',
+  'Crawl-delay: 5',
+  '',
+  'User-agent: BadBot',
+  'Disallow: /',
+  '',
+  'Sitemap: https://x.test/sitemap.xml'
+].join('\n');
+
+const parsedRobots = parseRobots(robotsTxt);
+const robotRules = rulesFor(parsedRobots, 'WebSourceCopier');
+check('robots groups parse', parsedRobots.groups.length === 2);
+check('robots sitemap captured', parsedRobots.sitemaps[0] === 'https://x.test/sitemap.xml');
+check('our agent falls into the * group', robotRules.length === 4);
+check('robots allows an ordinary path', isAllowedPath(robotRules, '/about'));
+check('robots blocks a disallowed folder', !isAllowedPath(robotRules, '/private/secret'));
+check('robots prefix match blocks /tmpfoo', !isAllowedPath(robotRules, '/tmpfoo'));
+check('robots longest match wins, Allow beating parent Disallow', isAllowedPath(robotRules, '/private/public-bit'));
+check('robots wildcard with $ anchors the extension', !isAllowedPath(robotRules, '/files/report.pdf'));
+check('robots $ anchor does not catch a trailing query', isAllowedPath(robotRules, '/files/report.pdf?x=1'));
+check('a named agent group overrides the wildcard', !isAllowedPath(rulesFor(parsedRobots, 'BadBot'), '/anything'));
+check('empty Disallow allows everything', isAllowedPath(rulesFor(parseRobots('User-agent: *\nDisallow:'), 'x'), '/a'));
+check('rules before any user-agent line are ignored', rulesFor(parseRobots('Disallow: /\nUser-agent: *\nAllow: /'), 'x').length === 1);
+check('missing robots.txt allows everything', (await loadRobots('https://x.test', async () => null)).allowed('https://x.test/private/x'));
+check('unreadable robots.txt allows everything', (await loadRobots('https://x.test', async () => { throw new Error('offline'); })).allowed('https://x.test/a'));
+const liveRobots = await loadRobots('https://x.test', async () => 'User-agent: *\nDisallow: /private/');
+check('loaded robots blocks by url', !liveRobots.allowed('https://x.test/private/a') && liveRobots.allowed('https://x.test/ok'));
+
+/* --------------------------------------------------------- site helpers */
+
+check('page path mirrors the url', pagePathFor('https://x.test/docs/en/overview') === 'pages/docs/en/overview.html');
+check('page path names the home page', pagePathFor('https://x.test/') === 'pages/index.html');
+check('page path names a directory url', pagePathFor('https://x.test/blog/') === 'pages/blog/index.html');
+check('page path keeps an .html suffix once', pagePathFor('https://x.test/a.html') === 'pages/a.html');
+check('page path separates query strings', pagePathFor('https://x.test/p?a=1') !== pagePathFor('https://x.test/p?a=2'));
+check('normalizePageUrl drops fragments', normalizePageUrl('/a#top', 'https://x.test/') === 'https://x.test/a');
+check('normalizePageUrl rejects mailto', normalizePageUrl('mailto:a@b.c', 'https://x.test/') === null);
+check('normalizePageUrl rejects javascript:', normalizePageUrl('javascript:void(0)', 'https://x.test/') === null);
+check('css url() references resolve against the sheet', cssUrlReferences('a{background:url(../i/x.png)}', 'https://x.test/css/s.css')[0] === 'https://x.test/i/x.png');
+check('css url() skips data URIs', cssUrlReferences('a{background:url(data:image/png;base64,AA)}', 'https://x.test/s.css').length === 0);
+check('css @import is followed', cssUrlReferences('@import "more.css";', 'https://x.test/css/s.css')[0] === 'https://x.test/css/more.css');
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(failed ? `\n${failed} failing` : '\nall unit checks passed');

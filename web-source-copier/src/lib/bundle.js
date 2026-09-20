@@ -11,6 +11,7 @@ import { formatByKind } from './format.js';
 import { extractOriginalSources } from './sourcemap.js';
 import { pageInventoryRunner } from './page-inventory.js';
 import { fetchWithTimeout } from './net.js';
+import { cssUrlReferences } from './html-scan.js';
 import { cssCopierRunner } from './css-collector.js';
 
 const TEXT_KINDS = new Set(['script', 'style', 'data', 'document']);
@@ -23,7 +24,10 @@ export const DEFAULT_OPTIONS = {
   includeInlineAttributes: false,
   maxFileBytes: 12 * 1024 * 1024,
   // One unreachable host must not hold up the whole capture.
-  fetchTimeoutMs: 20000
+  fetchTimeoutMs: 20000,
+  // Site capture follows url() references out of fetched stylesheets, since
+  // there is no live CSSOM to read them from.
+  followCssUrls: false
 };
 
 export function kindOf(url, contentType) {
@@ -64,7 +68,7 @@ function formatKindFor(kind, url) {
   return null;
 }
 
-function shortHash(text) {
+export function shortHash(text) {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
   return hash.toString(36).slice(0, 6);
@@ -123,6 +127,135 @@ function looksBinary(bytes) {
     if (byte < 9 || (byte > 13 && byte < 32)) control++;
   }
   return control / Math.max(1, sample.length) > 0.1;
+}
+
+/**
+ * Shared state for one archive. Single-page capture uses one of these for one
+ * page; site capture reuses it across every page, so a stylesheet shared by
+ * fifty pages is fetched, formatted and stored exactly once.
+ */
+export function createCapture(config) {
+  const options = Object.assign({}, DEFAULT_OPTIONS, config.options || {});
+  const onProgress = config.onProgress || (() => {});
+
+  const fetchBody = async (url) => {
+    if (config.getBody) {
+      const recorded = await config.getBody(url);
+      if (recorded && recorded.bytes) return recorded;
+    }
+    return defaultFetch(url, options.fetchTimeoutMs);
+  };
+  const fetchText = async (url) => {
+    const result = await fetchBody(url);
+    return result ? decodeText(result.bytes) : null;
+  };
+
+  const root =
+    (() => {
+      try {
+        return new URL(config.primaryUrl).hostname.replace(/^www\./, '');
+      } catch (err) {
+        return 'capture';
+      }
+    })() + '-' + new Date().toISOString().slice(0, 10);
+
+  return {
+    options,
+    onProgress,
+    fetchBody,
+    fetchText,
+    root,
+    zip: new ZipWriter(),
+    stats: { files: 0, bytes: 0, byKind: {}, failures: [], sourceFiles: 0, maps: 0 },
+    storedResources: new Map(), // url -> archive path (deduplicates across pages)
+    sourceSeen: new Set(),
+    manifestRows: [],
+    pages: []
+  };
+}
+
+/**
+ * Fetches one resource into the archive, unpacking its source map if it has
+ * one. Returns the path it was stored at, or null when it could not be had.
+ */
+export async function addResource(ctx, resource) {
+  const { options, stats } = ctx;
+  if (ctx.storedResources.has(resource.url)) return ctx.storedResources.get(resource.url);
+
+  let body;
+  try {
+    body = await ctx.fetchBody(resource.url);
+  } catch (err) {
+    stats.failures.push({ url: resource.url, error: err.message });
+    ctx.storedResources.set(resource.url, null);
+    return null;
+  }
+
+  if (body.bytes.length > options.maxFileBytes) {
+    stats.failures.push({
+      url: resource.url,
+      error: 'skipped, ' + formatBytes(body.bytes.length) + ' exceeds the size limit'
+    });
+    ctx.storedResources.set(resource.url, null);
+    return null;
+  }
+
+  const kind = kindOf(resource.url, body.contentType);
+  const isText = TEXT_KINDS.has(kind) && !looksBinary(body.bytes);
+  let stored = body.bytes;
+  let text = null;
+
+  if (isText) {
+    text = decodeText(body.bytes);
+    const formatKind = options.prettyPrint ? formatKindFor(kind, resource.url) : null;
+    stored = formatKind ? formatByKind(formatKind, text) : text;
+  }
+
+  const writtenAs = await ctx.zip.add(ctx.root + '/' + zipPathForUrl(resource.url), stored);
+  const archivePath = writtenAs.slice(ctx.root.length + 1);
+  ctx.storedResources.set(resource.url, archivePath);
+  stats.files++;
+  stats.bytes += body.bytes.length;
+  stats.byKind[kind] = (stats.byKind[kind] || 0) + 1;
+  ctx.manifestRows.push({
+    url: resource.url,
+    kind,
+    size: body.bytes.length,
+    path: archivePath,
+    origins: resource.origins || []
+  });
+
+  if (options.sourceMaps && text && (kind === 'script' || kind === 'style')) {
+    try {
+      const extracted = await extractOriginalSources(ctx.fetchText, resource.url, text);
+      if (extracted) {
+        stats.maps++;
+        if (extracted.error) stats.failures.push({ url: extracted.mapUrl, error: extracted.error });
+        for (const file of extracted.files) {
+          const key = file.path + '|' + file.content.length;
+          if (ctx.sourceSeen.has(key)) continue;
+          ctx.sourceSeen.add(key);
+          await ctx.zip.add(ctx.root + '/src/' + file.path, file.content);
+          stats.sourceFiles++;
+          stats.files++;
+        }
+      }
+    } catch (err) {
+      stats.failures.push({ url: resource.url, error: 'source map: ' + err.message });
+    }
+  }
+
+  // A stylesheet points at fonts and images of its own.
+  if (text && kind === 'style' && options.followCssUrls) {
+    for (const url of cssUrlReferences(text, resource.url)) {
+      if (ctx.storedResources.has(url)) continue;
+      const nested = kindOf(url, '');
+      if (!options.includeAssets && ['image', 'font', 'media'].includes(nested)) continue;
+      await addResource(ctx, { url, kind: nested, origins: ['css url() in ' + archivePath] });
+    }
+  }
+
+  return archivePath;
 }
 
 /**
@@ -347,6 +480,133 @@ export async function captureSite(config) {
 
   const blob = await zip.finish();
   return { blob, stats, filename: root + '.zip', resourceCount: queue.length };
+}
+
+/** Writes the report, the inventory and the page index, then seals the archive. */
+export async function finishCapture(ctx, meta) {
+  const report = meta && meta.mode === 'site' ? buildSiteReport(ctx, meta) : meta.report;
+  await ctx.zip.add(ctx.root + '/README.md', report);
+  await ctx.zip.add(
+    ctx.root + '/inventory.json',
+    JSON.stringify(
+      {
+        url: meta.primaryUrl,
+        capturedAt: new Date().toISOString(),
+        pages: ctx.pages,
+        resources: ctx.manifestRows
+      },
+      null,
+      2
+    )
+  );
+  if (ctx.pages.length > 1) {
+    await ctx.zip.add(ctx.root + '/pages/pages.json', JSON.stringify(ctx.pages, null, 2));
+  }
+  const blob = await ctx.zip.finish();
+  return {
+    blob,
+    stats: ctx.stats,
+    filename: ctx.root + '.zip',
+    pages: ctx.pages,
+    resourceCount: ctx.manifestRows.length
+  };
+}
+
+const SERVER_SIDE_NOTE = `## What a browser can never give you
+
+This archive contains everything the server **sent** to the browser. It cannot
+contain the code that ran **on** the server to produce it:
+
+- PHP, Ruby, Python, Node, Java or .NET source
+- server-side templates (Blade, Twig, ERB, Jinja, Razor, JSP)
+- database schemas, queries or contents
+- \`.env\` files, API keys, config, cron jobs, server routes
+
+A \`.php\` URL in \`inventory.json\` is the *output* of a PHP script, not the script.
+If \`src/\` has content, those are the site's real pre-build sources (TypeScript,
+JSX, SCSS, Vue/Svelte), published by the site's own source maps.
+
+The files here remain the copyright of their owners. Use them for study,
+debugging, archiving or migration of your own work — not for republishing
+someone else's site.
+`;
+
+function buildSiteReport(ctx, meta) {
+  const { stats, manifestRows, options } = ctx;
+  const pages = ctx.pages;
+  const captured = pages.filter((page) => page.status === 'captured');
+
+  const pageRows = pages
+    .map(
+      (page) =>
+        '| ' + page.url + ' | ' + (page.path ? '`' + page.path + '`' : '—') + ' | ' + page.mode + ' | ' + page.status +
+        (page.error ? ' (' + page.error + ')' : '') + ' |'
+    )
+    .join('\n');
+
+  const byKind = Object.entries(stats.byKind)
+    .sort((a, b) => b[1] - a[1])
+    .map(([kind, count]) => '| ' + kind + ' | ' + count + ' |')
+    .join('\n');
+
+  const failures = stats.failures.length
+    ? stats.failures.map((failure) => '- `' + failure.url + '` — ' + failure.error).join('\n')
+    : '_None._';
+
+  const robots = meta.robots || {};
+  const robotsLine =
+    robots.status === 'loaded'
+      ? 'Read from `' + robots.url + '`. ' + (meta.blockedByRobots || 0) + ' discovered page(s) were excluded by it.'
+      : robots.status === 'missing'
+        ? 'This site publishes no robots.txt, so nothing was excluded.'
+        : 'robots.txt could not be read, so nothing was excluded.';
+
+  return `# Site capture of ${meta.origin}
+
+- **Started from:** ${meta.primaryUrl}
+- **Captured:** ${new Date().toISOString()}
+- **Pages captured:** ${captured.length} of ${pages.length} selected
+- **Files in this archive:** ${stats.files}
+- **Downloaded:** ${formatBytes(stats.bytes)}
+- **Source maps found:** ${stats.maps} (${stats.sourceFiles} original source files recovered)
+- **Options:** pretty-print ${options.prettyPrint ? 'on' : 'off'}, source maps ${options.sourceMaps ? 'on' : 'off'}, binary assets ${options.includeAssets ? 'included' : 'skipped'}, pages ${meta.renderPages ? 'rendered in a background tab' : 'captured as served'}
+
+## robots.txt
+
+${robotsLine}
+
+## Pages
+
+Each page's HTML is under \`pages/\`. Assets shared between pages are stored once
+in \`files/\`, so the archive does not repeat a stylesheet fifty times. Links
+inside the HTML are **not** rewritten — they still point at the live site.
+
+| Page | File | How | Result |
+| --- | --- | --- | --- |
+${pageRows || '| — | — | — | — |'}
+
+## Layout
+
+| Path | What it is |
+| --- | --- |
+| \`pages/\` | One HTML file per captured page, plus \`pages.json\` |
+| \`collected.css\` | Every CSS rule in play on the page you started from, shadow DOM and iframes included |
+| \`inline-scripts/\` | \`<script>\` blocks that have no URL of their own |
+| \`files/<host>/…\` | Every downloaded asset, in the site's own folder structure |
+| \`src/\` | **Original pre-build sources recovered from source maps** |
+| \`inventory.json\` | Every resource and page with its URL, type, size and archive path |
+
+## What is in here, by type
+
+| Type | Files |
+| --- | --- |
+${byKind || '| — | 0 |'}
+
+## Not captured
+
+${failures}
+
+${SERVER_SIDE_NOTE}`;
 }
 
 function buildReport({ top, stats, manifestRows, options, frames }) {

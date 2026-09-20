@@ -157,3 +157,76 @@ input[type="search"] { flex: 1; min-width: 120px; }
 .source-list { margin: 0; padding: 0; list-style: none; }
 .source-list li { padding: 3px 0; cursor: pointer; color: var(--accent); }
 .source-list li:hover { text-decoration: underline; }
+
+/* ---- site capture picker (shared by the popup and the panel) ---- */
+
+.picker-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.picker-limit {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.picker-limit input {
+  width: 58px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.picker-controls button { flex: 0 0 auto; padding: 4px 8px; font-size: 11px; }
+
+.picker-list {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.picker-row:last-child { border-bottom: 0; }
+.picker-row:hover { background: var(--code-bg); }
+.picker-row input { margin-top: 2px; accent-color: var(--accent); }
+.picker-row.is-blocked { opacity: 0.55; cursor: not-allowed; }
+
+.picker-text { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; min-width: 0; }
+.picker-text strong { font-weight: 600; word-break: break-all; }
+.picker-text small { width: 100%; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.picker-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--code-bg);
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.picker-footer { margin-top: 10px; display: grid; gap: 8px; }
+.picker-footer .check { display: flex; gap: 6px; align-items: flex-start; color: var(--muted); font-size: 11px; }
+.picker-footer .check input { margin-top: 2px; accent-color: var(--accent); }
+
+.picker-host { padding: 12px; overflow: auto; white-space: normal; font: inherit; background: var(--bg); }
+.picker-host .picker-list { max-height: none; }

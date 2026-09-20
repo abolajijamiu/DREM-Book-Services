@@ -1,6 +1,8 @@
 import { cssCopierRunner } from '../lib/css-collector.js';
 import { captureSite } from '../lib/bundle.js';
 import { formatHtml } from '../lib/format.js';
+import { mountSitePicker } from '../ui/site-picker.js';
+import { fetchWithTimeout } from '../lib/net.js';
 
 const el = (id) => document.getElementById(id);
 const ui = {
@@ -281,12 +283,40 @@ ui.exportZip.addEventListener('click', async () => {
   }
 });
 
+let sitePickerMounted = false;
+function mountSite() {
+  if (sitePickerMounted || !currentTab) return;
+  sitePickerMounted = true;
+  mountSitePicker({
+    container: el('sitePicker'),
+    tabId: currentTab.id,
+    setStatus,
+    saveBlob,
+    fetchText: async (url) => {
+      const response = await fetchWithTimeout(url, { credentials: 'omit' }, 15000);
+      return response.ok ? response.text() : null;
+    },
+    getOptions: () => ({
+      prettyPrint: ui.optPretty.checked,
+      sourceMaps: ui.optSourceMaps.checked,
+      includeAssets: ui.optAssets.checked,
+      usedCssOnly: ui.usedOnly.checked,
+      includeInlineAttributes: ui.includeInline.checked
+    }),
+    onProgress: ({ done, total }) => {
+      ui.progress.hidden = false;
+      ui.progressBar.style.width = Math.max(2, Math.round((done / Math.max(1, total)) * 100)) + '%';
+    }
+  });
+}
+
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach((other) => other.classList.toggle('is-active', other === tab));
     document.querySelectorAll('.pane').forEach((pane) => {
       pane.classList.toggle('is-active', pane.id === 'pane-' + tab.dataset.pane);
     });
+    if (tab.dataset.pane === 'site') mountSite();
   });
 });
 

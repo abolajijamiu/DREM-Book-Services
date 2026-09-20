@@ -88,6 +88,26 @@ Press **Esc** to cancel.
 popup open while it runs (clicking the page closes any Chrome popup); for big
 sites, use the DevTools panel instead.
 
+**Site tab — capturing more than one page**
+
+1. Open it. The extension reads the links already on the page and the site's
+   `robots.txt`, and lists the pages on offer — the one you are on first.
+2. Pages `robots.txt` disallows are greyed out with a **robots.txt** tag and
+   cannot be selected. That is deliberate and not configurable.
+3. **Max pages** starts at 25. The first 25 allowed pages are ticked for you.
+   Want more? Raise the number, then **Select first N** — or tick boxes yourself.
+   The picker will not let you go past the number you set.
+4. **Find more pages** fetches the pages you have selected and adds the links
+   *they* contain. Click it again to go deeper.
+5. Optional: **Run each page's JavaScript** loads every page in a background tab
+   instead of just fetching its HTML. Slower, but required for sites that build
+   their content in the browser (React/Vue/Svelte apps).
+6. **Capture N pages (.zip)**.
+
+Each page's HTML lands in `pages/`, and assets shared between pages — the
+stylesheet, the fonts, the bundle — are stored **once** in `files/`. Links
+inside the saved HTML still point at the live site; they are not rewritten.
+
 ## 5. The DevTools panel — where the deep work happens
 
 Press **F12** (or **⌥⌘I** on macOS) and pick the **Source Copier** tab. If the
@@ -132,6 +152,7 @@ why.
 | Read a minified bundle | DevTools panel → click the bundle → it is pretty-printed for you |
 | Grab an API response | DevTools panel → **Reload & capture** → filter to `Data / XHR` → click → **Copy** |
 | Archive a page you own | **Export**, keep the ZIP |
+| Archive a whole small site | **Site** tab → **Find more pages** → raise the limit → **Capture** |
 | Recover your own lost source | If your deployed build shipped `.map` files, **Recover sources** gets the originals back |
 
 ## 8. Keeping it up to date
@@ -153,6 +174,8 @@ reload the same way.)
 | The panel list stays empty | It only records while it is open. Click **Reload & capture**. |
 | Clicking the page dismissed the popup | Normal Chrome behaviour for any popup. Start long exports from the DevTools panel. |
 | Assets missing from the ZIP | Check `README.md` in the archive: it names each failure (403, 404, CORS, size limit). |
+| A page you wanted is greyed out | The site's `robots.txt` disallows it. |
+| A captured page looks empty | It builds its content in the browser — recapture with **Run each page's JavaScript** ticked. |
 | Icon greyed out after a Chrome restart | The extension folder moved or was deleted. Keep it somewhere permanent and reload it. |
 | "Errors" badge on `chrome://extensions` | Click **Errors** to see the message. Usually the wrong folder was loaded. |
 
