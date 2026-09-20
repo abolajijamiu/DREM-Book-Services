@@ -12,7 +12,7 @@ import { extractOriginalSources } from './sourcemap.js';
 import { pageInventoryRunner } from './page-inventory.js';
 import { fetchWithTimeout, forEachPooled } from './net.js';
 import { cssUrlReferences } from './html-scan.js';
-import { rewriteHtml, rewriteCss } from './rewrite.js';
+import { rewriteHtml, rewriteCss, buildLookup } from './rewrite.js';
 import { cssCopierRunner } from './css-collector.js';
 
 const TEXT_KINDS = new Set(['script', 'style', 'data', 'document']);
@@ -517,14 +517,14 @@ export async function finishCapture(ctx, meta) {
  * has a known home in the archive.
  */
 async function flushDeferred(ctx) {
-  const map = new Map();
+  const entries = [];
   ctx.storedResources.forEach((archivePath, url) => {
-    if (archivePath) map.set(url, archivePath);
+    if (archivePath) entries.push({ url, path: archivePath });
   });
   ctx.pages.forEach((page) => {
-    if (page.path && page.url) map.set(page.url, page.path);
+    if (page.path && page.url) entries.push({ url: page.url, path: page.path });
   });
-  const lookup = (url) => map.get(url) || null;
+  const lookup = buildLookup(entries);
 
   for (const entry of ctx.deferred) {
     const fromPath = entry.name.slice(ctx.root.length + 1);
@@ -642,8 +642,11 @@ ${SERVER_SIDE_NOTE}`;
 
 function buildReport({ top, stats, manifestRows, options, frames }) {
   const stoppedNote = stats.stopped
-    ? '\n> **Stopped early.** You pressed Stop after ' + stats.stopped.after + ' of ' + stats.stopped.of +
-      ' resources. Everything already downloaded is in this archive.\n'
+    ? stats.stopped.after === 0
+      ? '\n> **Stopped early.** You pressed Stop before the downloads began, so this archive holds the page ' +
+        'itself and its inline scripts, but none of its ' + stats.stopped.of + ' linked resources.\n'
+      : '\n> **Stopped early.** You pressed Stop after ' + stats.stopped.after + ' of ' + stats.stopped.of +
+        ' resources. Everything already downloaded is in this archive.\n'
     : '';
   const byKind = Object.entries(stats.byKind)
     .sort((a, b) => b[1] - a[1])

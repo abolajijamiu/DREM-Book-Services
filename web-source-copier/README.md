@@ -137,6 +137,7 @@ binary assets.
 | ZIP without a library | `CompressionStream('deflate-raw')` plus a hand-written central directory. Already-compressed formats (PNG, WOFF2, MP4 …) are stored rather than deflated — same size, a quarter of the CPU |
 | Capture speed | Downloads run 8 at a time (`concurrency`), identical URLs are de-duplicated in flight, and a host that times out three times is dropped rather than waited on again |
 | Original sources | `sourceMappingURL` (including inline `data:` maps and index maps with `sections`) → `sourcesContent` → a real folder tree |
+| Matching a URL to its file | Exact URL first, then the same path minus its query string — sites routinely load `/app.js?build=123` while their markup says `/app.js`. The fallback only fires when exactly one captured file shares that path |
 | Offline browsing | After everything is stored, a rewrite pass repoints attributes (`src`, `href`, `srcset`, `poster`, inline `style`) and CSS `url()`/`@import` at archive-relative paths, neutralises `<base href>`, and leaves uncaptured URLs absolute |
 | Stopping a capture | An `AbortController` reaches the work pool and every in-flight request; the archive is then sealed with whatever it already has |
 | Which pages may be captured | `robots.txt` parsed per RFC 9309 — user-agent groups, `Allow`/`Disallow`, `*` and `$` patterns, longest-match-wins — consulted before any page is fetched |
@@ -291,10 +292,18 @@ README says when that happened.
 
 ![an archived page rendering offline](docs/offline-archive.png)
 
-That is a live capture of pypi.org opened from the archive with every request
-to `pypi.org` blocked: 3 stylesheets, 3,239 rules, its own fonts and logo. The
-test suite proves the same thing on the fixture site by serving the unpacked
-archive and aborting any request that tries to reach the original origin.
+Live captures opened from their archives with every request to the original
+site blocked:
+
+| Site | Stylesheets | CSS rules applied | References still pointing outside |
+| --- | --- | --- | --- |
+| pypi.org | 3 | 3,648 | 15 (assets the capture could not fetch) |
+| jsr.io | 3 | 2,423 | 1 (a blocked analytics beacon) |
+| code.claude.com/docs | 12 | 4,944 | 8 (CDN assets this sandbox blocks) |
+
+The test suite proves the same thing on the fixture site by serving the
+unpacked archive and aborting any request that tries to reach the original
+origin, and `npm run test:real` repeats it against any live URL.
 
 Assets that could **not** be captured (a 403, a blocked host) keep their
 original URLs, so an archived page may still reach out for those few files when

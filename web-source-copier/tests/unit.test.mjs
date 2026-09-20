@@ -16,7 +16,7 @@ import { absolutizeCssUrls } from '../src/lib/picker.js';
 import { parseRobots, rulesFor, isAllowedPath, loadRobots } from '../src/lib/robots.js';
 import { pagePathFor } from '../src/lib/site.js';
 import { normalizePageUrl, cssUrlReferences } from '../src/lib/html-scan.js';
-import { relativePath, rewriteHtml, rewriteCss } from '../src/lib/rewrite.js';
+import { relativePath, rewriteHtml, rewriteCss, buildLookup } from '../src/lib/rewrite.js';
 
 globalThis.atob ||= (b64) => Buffer.from(b64, 'base64').toString('binary');
 
@@ -81,6 +81,13 @@ const css = formatCss('.a{color:red;background:url("a;b{}c")}@media (min-width:1
 check('css nests inside @media', css.includes('  .b, .c {'));
 check('css leaves url() strings alone', css.includes('url("a;b{}c")'));
 check('css spaces declarations', css.includes('color: red;'));
+
+const nested = formatCss('@layer properties{@supports (x:y){*,::before,::after,::backdrop{--tw-leading:initial}}}@media (min-width:10px){a:hover::after{content:"x";color:red}}.a::first-line{color:blue}');
+check('css keeps ::before inside an at-rule', nested.includes('*, ::before, ::after, ::backdrop'), nested.split('\n')[2]);
+check('css keeps a compound pseudo selector', nested.includes('a:hover::after'));
+check('css keeps a top-level pseudo-element', nested.includes('.a::first-line'));
+check('css still spaces a nested declaration', nested.includes('--tw-leading: initial') && nested.includes('color: red'));
+check('css still spaces a media feature', nested.includes('(min-width: 10px)'));
 
 const html = formatHtml('<!doctype html><html><head><style>.a{color:red}</style></head><body><div class="x"><p>hi</p><br><img src="a.png"></div><pre>  keep\n   me  </pre><script>var a=1;var b=2</script></body></html>');
 const lineOf = (needle) => html.split('\n').find((line) => line.includes(needle)) || '';
@@ -243,6 +250,18 @@ const sheet = rewriteCss(
 check('css rewrite resolves against the stylesheet', sheet.includes('url("img/logo.png")'));
 check('css rewrite leaves uncaptured urls alone', sheet.includes('url(/missing.png)'));
 check('css rewrite leaves data URIs alone', sheet.includes('url(data:image/png;base64,AA)'));
+
+const fallback = buildLookup([
+  { url: 'https://s.test/app.js?build=123', path: 'files/s.test/app~ab12.js' },
+  { url: 'https://s.test/one.png?size=1', path: 'files/s.test/one~a.png' },
+  { url: 'https://s.test/one.png?size=2', path: 'files/s.test/one~b.png' },
+  { url: 'https://s.test/plain.css', path: 'files/s.test/plain.css' }
+]);
+check('lookup matches an exact url', fallback('https://s.test/plain.css') === 'files/s.test/plain.css');
+check('lookup ignores a missing cache-buster', fallback('https://s.test/app.js') === 'files/s.test/app~ab12.js');
+check('lookup matches a different cache-buster on the same path', fallback('https://s.test/app.js?build=999') === 'files/s.test/app~ab12.js');
+check('lookup refuses to guess between query variants', fallback('https://s.test/one.png') === null);
+check('lookup returns null for anything uncaptured', fallback('https://s.test/nope.js') === null);
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(failed ? `\n${failed} failing` : '\nall unit checks passed');

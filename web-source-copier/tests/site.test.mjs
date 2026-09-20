@@ -190,6 +190,36 @@ check('a link to an uncaptured page stays absolute', /href="\/team"|href="http:\
 check('the external link is untouched', read('pages/index.html').includes('https://example.com/external'));
 check('css url() was repointed inside the archive', /url\(logo\.png\)|url\("logo\.png"\)/.test(read('files/127.0.0.1/page.css')), read('files/127.0.0.1/page.css'));
 
+// Pretty-printing must never change what the browser parses.
+const archivedCss = read('files/127.0.0.1/site.css');
+const originalCss = await (await fetch(fixture.url + 'site.css')).text();
+const parsed = await popup.evaluate(
+  ([original, archived]) => {
+    const count = (text) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(text);
+      const walk = (rules) => Array.from(rules).reduce((total, rule) => total + 1 + (rule.cssRules ? walk(rule.cssRules) : 0), 0);
+      return walk(sheet.cssRules);
+    };
+    const selectors = (text) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(text);
+      const out = [];
+      const walk = (rules) => Array.from(rules).forEach((rule) => {
+        if (rule.selectorText) out.push(rule.selectorText);
+        if (rule.cssRules) walk(rule.cssRules);
+      });
+      walk(sheet.cssRules);
+      return out.join(' | ');
+    };
+    return { original: count(original), archived: count(archived), archivedSelectors: selectors(archived) };
+  },
+  [originalCss, archivedCss]
+);
+check('pretty-printed CSS parses to the same rule count', parsed.original === parsed.archived, parsed.original + ' vs ' + parsed.archived);
+check('pseudo-element selectors survive formatting', parsed.archivedSelectors.includes('::before'), parsed.archivedSelectors);
+check('state pseudo-classes survive formatting', parsed.archivedSelectors.includes('a:hover::after'), parsed.archivedSelectors);
+
 const archiveServer = serveDirectory(root, 8096);
 const offline = await ctx.newPage();
 // Nothing may reach the live fixture: if it does, this capture is not offline.

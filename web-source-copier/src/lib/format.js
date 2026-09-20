@@ -224,6 +224,35 @@ function collapseBlankLines(lines) {
   return out;
 }
 
+/**
+ * Is the colon at `index` a declaration separator, or part of a selector?
+ *
+ * `color: red;` wants a space after the colon. `a::before {` and `a:hover {`
+ * must be left exactly as they are — spacing them breaks the selector. Looking
+ * ahead for the first `{`, `;` or `}` settles it: a `{` first means everything
+ * up to here was a selector.
+ */
+function isDeclarationColon(source, index) {
+  const limit = Math.min(source.length, index + 2000);
+  for (let i = index + 1; i < limit; i++) {
+    const ch = source[i];
+    if (ch === '"' || ch === "'") {
+      i++;
+      while (i < limit && source[i] !== ch) i += source[i] === '\\' ? 2 : 1;
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      if (end === -1) return false;
+      i = end + 1;
+      continue;
+    }
+    if (ch === '{') return false; // a selector led here
+    if (ch === ';' || ch === '}') return true; // a declaration ended here
+  }
+  return false; // ambiguous: leaving the colon alone can never break the CSS
+}
+
 export function formatCss(source) {
   const lines = [];
   let line = '';
@@ -296,7 +325,7 @@ export function formatCss(source) {
     if (ch === '(') parenDepth++;
     if (ch === ')') parenDepth = Math.max(0, parenDepth - 1);
 
-    if (ch === ':' && (depth > 0 || parenDepth > 0)) {
+    if (ch === ':' && (parenDepth > 0 || (depth > 0 && isDeclarationColon(source, i)))) {
       line += ': ';
       i++;
       while (/\s/.test(source[i])) i++;

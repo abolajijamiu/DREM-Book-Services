@@ -71,7 +71,9 @@ export function startFixture(mainPort = 8094, otherPort = 8095) {
       '.external-used{border:1px solid black}',
       '.external-unused{border:9px dotted red}',
       '@media (min-width:1px){.hero-media{outline:1px solid red}.never-there{outline:9px solid red}}',
-      '@supports (display:grid){@media (min-width:1px){.hero-nested{color:navy}}}'
+      '@supports (display:grid){@media (min-width:1px){.hero-nested{color:navy}}}',
+      '@layer base{@supports (x:y){*,::before,::after,::backdrop{--tw-ring:initial}}}',
+      '@media (min-width:1px){.hero-media::before{content:"x"}a:hover::after{color:red}}'
     ].join('\n')],
     '/app.js': ['application/javascript', 'var app=1;function go(a,b){if(a>b){return a/b}return[1,2].map(function(x){return x*2})}\n//# sourceMappingURL=app.js.map'],
     '/app.js.map': ['application/json', SOURCE_MAP],

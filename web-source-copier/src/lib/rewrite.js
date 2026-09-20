@@ -125,3 +125,46 @@ export function rewriteHtml(html, config) {
 
   return out;
 }
+
+/**
+ * Builds the lookup the rewrite pass uses.
+ *
+ * Exact URL first. Failing that, the same path without its query string: sites
+ * routinely load one asset as `/app.js?build=123` while their markup points at
+ * plain `/app.js`. The fallback is only used when exactly one captured file
+ * shares that path, so two genuinely different `?size=` variants never get
+ * confused for one another.
+ */
+export function buildLookup(entries) {
+  const exact = new Map();
+  const byPath = new Map();
+
+  entries.forEach(({ url, path }) => {
+    if (!url || !path) return;
+    exact.set(url, path);
+    let key;
+    try {
+      const parsed = new URL(url);
+      key = parsed.origin + parsed.pathname;
+    } catch (err) {
+      return;
+    }
+    const known = byPath.get(key);
+    if (!known) byPath.set(key, { path, count: 1 });
+    else if (known.path !== path) known.count++;
+  });
+
+  return (url) => {
+    const hit = exact.get(url);
+    if (hit) return hit;
+    let key;
+    try {
+      const parsed = new URL(url);
+      key = parsed.origin + parsed.pathname;
+    } catch (err) {
+      return null;
+    }
+    const candidate = byPath.get(key);
+    return candidate && candidate.count === 1 ? candidate.path : null;
+  };
+}

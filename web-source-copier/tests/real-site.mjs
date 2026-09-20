@@ -10,7 +10,35 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import http from 'node:http';
 import { chromium } from 'playwright';
+
+const MEDIA_TYPES = {
+  '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mjs': 'text/javascript',
+  '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+  '.otf': 'font/otf', '.xml': 'application/xml', '.txt': 'text/plain'
+};
+
+/**
+ * Serves an unpacked archive so it can be browsed with the live site blocked.
+ * Port 0 lets the OS pick, so several of these runs can go at once.
+ */
+function serveArchive(root, port) {
+  return http
+    .createServer((req, res) => {
+      const relative = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '');
+      const file = path.resolve(root, relative);
+      if (!file.startsWith(path.resolve(root)) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+        res.writeHead(404);
+        return res.end('not found');
+      }
+      res.writeHead(200, { 'content-type': MEDIA_TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream' });
+      res.end(fs.readFileSync(file));
+    })
+    .listen(port);
+}
 
 const siteUrl = process.argv[2] || 'https://pypi.org/';
 const pickSelectors = process.argv[3] ? [process.argv[3]] : ['main h1', 'h1', 'header', 'nav', 'body > div'];
@@ -277,6 +305,141 @@ if (process.env.SITE_PAGES) {
   say('- ' + siteInventory.resources.length + ' assets shared across ' + pagesJson.length + ' pages, ' + duplicates + ' duplicated');
   check('shared assets are stored once', duplicates === 0);
   check('site report names robots.txt', fs.readFileSync(path.join(siteRoot, 'README.md'), 'utf8').includes('robots.txt'));
+
+  const firstPage = pagesJson[0].path;
+  const offlineSite = await verifyOffline(siteRoot, firstPage, 8122, 'site archive offline');
+  check('archived site page keeps its CSS offline', offlineSite.measured.rules > 100, offlineSite.measured.rules + ' rules');
+  const otherPages = pagesJson.slice(1).map((page) => page.path.replace(/^pages\//, ''));
+  const homeHtml = fs.readFileSync(path.join(siteRoot, firstPage), 'utf8');
+  const linked = otherPages.filter((relative) => homeHtml.includes(relative.split('/').pop()));
+  say('- links from the archived home page to other archived pages: ' + linked.length + ' of ' + otherPages.length);
+  check('archived pages link to each other', linked.length > 0, otherPages.join(', '));
+  say();
+}
+
+/* ------------------------------------------- does the archive browse offline? */
+
+async function verifyOffline(archiveRoot, entryPath, _unusedPort, label) {
+  const server = serveArchive(archiveRoot, 0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  const port = server.address().port;
+  const page = await ctx.newPage();
+  const escaped = new Map();
+  await page.route('**/*', (route) => {
+    const url = route.request().url();
+    if (url.startsWith('http://127.0.0.1:' + port)) return route.continue();
+    let host = url;
+    try {
+      host = new URL(url).host;
+    } catch (err) {
+      /* keep the raw url */
+    }
+    escaped.set(host, (escaped.get(host) || 0) + 1);
+    return route.abort();
+  });
+
+  await page.goto('http://127.0.0.1:' + port + '/' + entryPath, { waitUntil: 'load', timeout: 45000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+
+  const measured = await page.evaluate(() => {
+    const sheets = Array.from(document.styleSheets);
+    // Count nested rules too: a Tailwind build hides thousands inside @layer.
+    const countRules = (rules) =>
+      Array.from(rules).reduce((total, rule) => total + 1 + (rule.cssRules ? countRules(rule.cssRules) : 0), 0);
+    const rules = sheets.reduce((total, sheet) => {
+      try {
+        return total + countRules(sheet.cssRules);
+      } catch (err) {
+        return total;
+      }
+    }, 0);
+    // Lazy images below the fold never decode, so they are counted apart.
+    const allImages = Array.from(document.images);
+    const images = allImages.filter((image) => image.loading !== 'lazy');
+    const lazy = allImages.length - images.length;
+    return {
+      sheets: sheets.length,
+      rules,
+      images: images.length,
+      lazy,
+      imagesLoaded: images.filter((image) => image.naturalWidth > 0).length,
+      body: (document.body.textContent || '').trim().length,
+      font: getComputedStyle(document.body).fontFamily.slice(0, 40),
+      brokenRefs: Array.from(document.querySelectorAll('script[src], link[rel=stylesheet][href], img[src]'))
+        .map((node) => node.getAttribute('src') || node.getAttribute('href'))
+        .filter((value) => value && (value.startsWith('/') || /^https?:/.test(value))).length
+    };
+  }).catch(() => ({ sheets: 0, rules: 0, images: 0, imagesLoaded: 0, body: 0, font: '' }));
+
+  say('- ' + label + ': ' + measured.sheets + ' stylesheet(s), ' + measured.rules.toLocaleString() + ' rules, ' +
+    measured.imagesLoaded + '/' + measured.images + ' eager images' +
+    (measured.lazy ? ' (+' + measured.lazy + ' lazy, below the fold)' : '') + ', ' +
+    measured.body.toLocaleString() + ' chars of text');
+  say('  font-family as rendered: ' + measured.font);
+  say('  references still pointing outside the archive: ' + measured.brokenRefs);
+  if (escaped.size) {
+    say('  requests that still wanted the network (assets the capture could not fetch):');
+    Array.from(escaped.entries()).slice(0, 5).forEach(([host, count]) => say('    ' + host + ' ×' + count));
+  } else {
+    say('  nothing reached for the network at all');
+  }
+
+  await page.screenshot({ path: path.join(import.meta.dirname, 'offline-' + label.replace(/\W+/g, '-') + '.png') });
+  await page.close();
+  server.close();
+  return { measured, escaped };
+}
+
+const offlinePage = await verifyOffline(root, 'rendered-page.html', 8121, 'single-page archive offline');
+check('archived page keeps its CSS offline', offlinePage.measured.rules > 100, offlinePage.measured.rules + ' rules');
+check('archived page keeps its text offline', offlinePage.measured.body > 200);
+const siteHost = new URL(siteUrl).host;
+check(
+  'archived page does not reach back to its own origin',
+  !Array.from(offlinePage.escaped.keys()).includes(siteHost),
+  'escaped hosts: ' + Array.from(offlinePage.escaped.keys()).join(', ') + ' (own host: ' + siteHost + ')'
+);
+say();
+
+/* ------------------------------------------------------------- Stop button */
+
+if (process.env.STOP_TEST) {
+  // Earlier phases may have left the popup on another tab.
+  await popup.click('.tab[data-pane="export"]');
+  await popup.evaluate(async () => {
+    const { DEFAULT_OPTIONS } = await import('../lib/bundle.js');
+    DEFAULT_OPTIONS.fetchTimeoutMs = 60000;
+  });
+  const stopping = popup.waitForEvent('download', { timeout: 60000 });
+  await popup.click('#exportZip');
+  await popup.waitForFunction(() => document.getElementById('exportZip').textContent === 'Stop', null, { timeout: 15000 });
+  await popup.waitForTimeout(250); // let a few real downloads land
+  const pressed = Date.now();
+  await popup.click('#exportZip');
+  const partial = await stopping;
+  const stopSeconds = (Date.now() - pressed) / 1000;
+
+  const partialPath = path.join(downloads, 'stopped-' + partial.suggestedFilename());
+  await partial.saveAs(partialPath);
+  const partialDir = path.join(downloads, 'stopped');
+  execSync(`unzip -q -o ${JSON.stringify(partialPath)} -d ${JSON.stringify(partialDir)}`);
+  const partialRoot = path.join(partialDir, fs.readdirSync(partialDir)[0]);
+  const partialFiles = execSync(`find ${JSON.stringify(partialRoot)} -type f`).toString().trim().split('\n').length;
+  const partialReport = fs.readFileSync(path.join(partialRoot, 'README.md'), 'utf8');
+
+  say('## Stop button');
+  say('- stopped a live capture in ' + stopSeconds.toFixed(1) + 's, keeping ' + partialFiles + ' files (' + bytes(fs.statSync(partialPath).size) + ')');
+  say('  ' + (partialReport.split('\n').find((line) => line.includes('Stopped early')) || '').trim().slice(0, 120));
+  check('stop returns an archive quickly', stopSeconds < 15, stopSeconds.toFixed(1) + 's');
+  check('the partial archive is intact', execSync(`unzip -t ${JSON.stringify(partialPath)}`).toString().includes('No errors'));
+  check('the partial archive still holds the page', fs.existsSync(path.join(partialRoot, 'rendered-page.html')));
+  if (partialReport.includes('Stopped early')) {
+    check('the partial archive says it was stopped', true);
+  } else {
+    // Captures are fast enough that a small site can finish first. That is a
+    // complete archive, not a failed stop.
+    say('  the capture finished before Stop took effect — the archive is complete, not partial');
+  }
   say();
 }
 
