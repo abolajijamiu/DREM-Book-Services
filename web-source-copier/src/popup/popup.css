@@ -127,3 +127,64 @@ button.primary {
   font-size: 11px;
   white-space: pre;
 }
+
+/* ---- tabs, panes and the export progress bar ---- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab.is-active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.pane { display: none; }
+.pane.is-active { display: block; }
+
+.actions + .wide { margin-top: 8px; }
+button.wide { width: 100%; flex: none; }
+
+.hint {
+  margin: 8px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.hint code { background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+
+.options { border-bottom: 0; padding-bottom: 0; margin-bottom: 12px; }
+
+.progress {
+  height: 4px;
+  margin-top: 10px;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.progress .bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+.status { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }

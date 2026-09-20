@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Source Copier</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="group">
+        <button id="exportZip" class="primary">Export capture (.zip)</button>
+        <button id="pickElement">Pick element</button>
+        <button id="collectCss">Collect CSS</button>
+        <button id="copyHtml">Page HTML</button>
+      </div>
+      <div class="group grow">
+        <input id="search" type="search" placeholder="Filter by URL…" />
+        <select id="kind">
+          <option value="">All types</option>
+          <option value="script">Scripts</option>
+          <option value="style">Stylesheets</option>
+          <option value="document">Documents</option>
+          <option value="data">Data / XHR</option>
+          <option value="image">Images</option>
+          <option value="font">Fonts</option>
+          <option value="media">Media</option>
+          <option value="wasm">Wasm</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="group">
+        <label class="check"><input type="checkbox" id="optPretty" checked /> Pretty-print</label>
+        <label class="check"><input type="checkbox" id="optSourceMaps" checked /> Source maps</label>
+        <label class="check"><input type="checkbox" id="optAssets" checked /> Assets</label>
+        <button id="reload" title="Reload the page to capture everything from the first byte">Reload &amp; capture</button>
+        <button id="clear">Clear</button>
+      </div>
+    </header>
+
+    <div class="progress" id="progress" hidden><div class="bar" id="progressBar"></div></div>
+
+    <main class="split">
+      <section class="list" id="list" aria-label="Captured resources">
+        <p class="empty" id="empty">
+          Nothing captured yet. Reload the page with this panel open and every request
+          the page makes — including XHR and API responses — shows up here.
+        </p>
+      </section>
+
+      <section class="viewer">
+        <div class="viewer-head">
+          <div class="viewer-title" id="viewerTitle">Select a resource</div>
+          <div class="viewer-actions">
+            <button id="copyFile" disabled>Copy</button>
+            <button id="saveFile" disabled>Save</button>
+            <button id="unmap" hidden>Recover sources</button>
+          </div>
+        </div>
+        <div class="viewer-meta" id="viewerMeta"></div>
+        <pre class="viewer-body" id="viewerBody"></pre>
+      </section>
+    </main>
+
+    <footer class="statusbar"><span id="status">Ready.</span></footer>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

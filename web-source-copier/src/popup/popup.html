@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Web Source Copier</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="head">
+      <h1>Web Source Copier</h1>
+      <p id="page" class="page">Reading page…</p>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-pane="copy" role="tab">Copy</button>
+      <button class="tab" data-pane="export" role="tab">Export</button>
+    </nav>
+
+    <section class="pane is-active" id="pane-copy">
+      <div class="actions">
+        <button id="copyCss" class="primary" disabled>Copy CSS</button>
+        <button id="copyHtml">Copy HTML</button>
+      </div>
+      <button id="pickElement" class="wide">Pick an element →</button>
+      <p class="hint">
+        Picking closes this popup; click any element on the page and its HTML plus
+        the CSS that matches it lands on your clipboard.
+      </p>
+
+      <div class="options">
+        <label class="option">
+          <input type="checkbox" id="usedOnly" />
+          <span>Only CSS rules used on this page<small>Drops selectors that match nothing in the DOM.</small></span>
+        </label>
+        <label class="option">
+          <input type="checkbox" id="includeInline" />
+          <span>Include <code>style=""</code> attributes<small>Added as a commented reference block.</small></span>
+        </label>
+      </div>
+
+      <div class="stats" id="stats" hidden>
+        <div><strong id="statRules">0</strong><span>rules</span></div>
+        <div><strong id="statSheets">0</strong><span>sources</span></div>
+        <div><strong id="statSize">0 KB</strong><span>size</span></div>
+      </div>
+    </section>
+
+    <section class="pane" id="pane-export">
+      <p class="hint">
+        Downloads everything the page is built from — HTML, CSS, JS, images, fonts,
+        JSON — as a ZIP that keeps the site's folder structure.
+      </p>
+
+      <div class="options">
+        <label class="option">
+          <input type="checkbox" id="optSourceMaps" checked />
+          <span>Recover original sources<small>Unpacks source maps into <code>src/</code>: the site's real TS/JSX/SCSS.</small></span>
+        </label>
+        <label class="option">
+          <input type="checkbox" id="optPretty" checked />
+          <span>Pretty-print minified code<small>Formats JS, CSS, HTML and JSON.</small></span>
+        </label>
+        <label class="option">
+          <input type="checkbox" id="optAssets" checked />
+          <span>Include images, fonts and media<small>Off means code and data only.</small></span>
+        </label>
+      </div>
+
+      <button id="exportZip" class="primary wide">Export capture (.zip)</button>
+      <div class="progress" id="progress" hidden><div class="bar" id="progressBar"></div></div>
+      <p class="hint" id="exportNote">
+        Keep this popup open while it runs. For long captures — and for XHR/API
+        responses — use the <strong>Web Source Copier</strong> panel in DevTools.
+      </p>
+    </section>
+
+    <section id="status" class="status" role="status">Collecting stylesheets…</section>
+
+    <details class="preview" id="previewWrap" hidden>
+      <summary>Preview</summary>
+      <pre id="preview"></pre>
+    </details>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
