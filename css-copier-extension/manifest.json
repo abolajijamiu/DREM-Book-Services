@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "CSS Copier",
+  "version": "1.0.0",
+  "description": "Copy every CSS rule a page uses — external stylesheets, <style> blocks, shadow DOM and iframes — to your clipboard or a .css file.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "Copy this page's CSS",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

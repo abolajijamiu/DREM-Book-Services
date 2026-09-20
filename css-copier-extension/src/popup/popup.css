@@ -1,0 +1,129 @@
+:root {
+  --bg: #ffffff;
+  --fg: #16161a;
+  --muted: #6b6b76;
+  --line: #e4e4ea;
+  --accent: #5b4ce0;
+  --accent-fg: #ffffff;
+  --danger: #b3261e;
+  --code-bg: #f6f6fa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17171b;
+    --fg: #f2f2f5;
+    --muted: #a0a0ad;
+    --line: #2e2e36;
+    --accent: #8b7cff;
+    --accent-fg: #14121f;
+    --danger: #ff8a80;
+    --code-bg: #212128;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 330px;
+  margin: 0;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.page {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.options {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.option input { margin: 2px 0 0; accent-color: var(--accent); }
+.option small { display: block; color: var(--muted); font-size: 11px; }
+.option code { background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+
+.status {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status.error { color: var(--danger); }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.stats div {
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.stats strong { display: block; font-size: 14px; }
+.stats span { color: var(--muted); font-size: 11px; }
+
+.actions { display: flex; gap: 8px; }
+
+button {
+  flex: 1;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.preview { margin-top: 12px; }
+.preview summary { color: var(--muted); cursor: pointer; font-size: 12px; }
+
+.preview pre {
+  max-height: 160px;
+  margin: 8px 0 0;
+  padding: 8px;
+  overflow: auto;
+  background: var(--code-bg);
+  border-radius: 8px;
+  font-size: 11px;
+  white-space: pre;
+}

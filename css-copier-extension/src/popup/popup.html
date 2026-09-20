@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CSS Copier</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="head">
+      <h1>CSS Copier</h1>
+      <p id="page" class="page">Reading page…</p>
+    </header>
+
+    <section class="options">
+      <label class="option">
+        <input type="checkbox" id="usedOnly" />
+        <span>
+          Only rules used on this page
+          <small>Drops selectors that match nothing in the DOM.</small>
+        </span>
+      </label>
+      <label class="option">
+        <input type="checkbox" id="includeInline" />
+        <span>
+          Include <code>style=""</code> attributes
+          <small>Added as a commented reference block.</small>
+        </span>
+      </label>
+    </section>
+
+    <section id="status" class="status" role="status">Collecting stylesheets…</section>
+
+    <section class="stats" id="stats" hidden>
+      <div><strong id="statRules">0</strong><span>rules</span></div>
+      <div><strong id="statSheets">0</strong><span>sources</span></div>
+      <div><strong id="statSize">0 KB</strong><span>size</span></div>
+    </section>
+
+    <div class="actions">
+      <button id="copy" class="primary" disabled>Copy CSS</button>
+      <button id="download" disabled>Save .css</button>
+    </div>
+
+    <details class="preview" id="previewWrap" hidden>
+      <summary>Preview</summary>
+      <pre id="preview"></pre>
+    </details>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
