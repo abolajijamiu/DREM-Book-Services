@@ -209,6 +209,9 @@ await panel.waitForFunction(() => document.getElementById('viewerBody').textCont
 const picked = await panel.textContent('#viewerBody');
 check('picker returns the element HTML', picked.includes('class="hero'));
 check('picker returns only matching CSS', picked.includes('.external-used') && !picked.includes('.external-unused'));
+check('picker includes cross-origin rules', picked.includes('.remote-used'), picked.slice(0, 600));
+check('picker drops unmatched cross-origin rules', !picked.includes('.remote-unused'));
+check('picker credits the cross-origin stylesheet', picked.includes('/* from http://127.0.0.1:8095/remote.css */'));
 check('picker reports computed styles', picked.includes('computed styles'));
 check('picker cleans up its overlay', !(await target.isVisible('#__web_source_copier_picker__')));
 
@@ -230,6 +233,39 @@ check(
 await panel.setViewportSize({ width: 1100, height: 560 });
 await panel.screenshot({ path: path.join(import.meta.dirname, 'panel.png') });
 check('panel raised no console errors', panelErrors.length === 0, panelErrors.join('\n      '));
+
+/* ------------------------------------------- popup picker via the worker */
+
+await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:8094' });
+
+const popup2 = await ctx.newPage();
+await popup2.addInitScript((activeTab) => {
+  const patch = () => {
+    if (typeof chrome === 'undefined' || !chrome.tabs) return false;
+    chrome.tabs.query = (query, callback) => (callback ? callback([activeTab]) : Promise.resolve([activeTab]));
+    return true;
+  };
+  if (!patch()) document.addEventListener('readystatechange', patch, true);
+}, tab);
+await popup2.goto(`chrome-extension://${extId}/src/popup/popup.html`);
+await popup2.waitForFunction(() => !document.getElementById('pickElement').disabled, null, { timeout: 20000 });
+// The popup closes itself once the service worker has taken the picker over.
+await popup2.click('#pickElement').catch(() => {});
+
+await target.bringToFront();
+await target.waitForSelector('#__web_source_copier_picker__', { timeout: 15000 });
+check('popup hands the picker to the service worker', true);
+await target.click('#hero', { position: { x: 6, y: 6 } });
+await target.waitForFunction(
+  () => Array.from(document.body.parentElement.children).some((node) => (node.textContent || '').startsWith('Copied ')),
+  null,
+  { timeout: 15000 }
+);
+check('page reports a successful copy', true);
+
+const clipboard = await target.evaluate(() => navigator.clipboard.readText().catch(() => ''));
+check('clipboard holds the element HTML', clipboard.includes('id="hero"'), clipboard.slice(0, 200));
+check('clipboard holds its cross-origin CSS', clipboard.includes('.remote-used'), clipboard.slice(0, 400));
 
 await ctx.close();
 fixture.close();

@@ -1,5 +1,4 @@
 import { cssCopierRunner } from '../lib/css-collector.js';
-import { elementInspectorRunner } from '../lib/element-inspector.js';
 import { captureSite } from '../lib/bundle.js';
 import { formatHtml } from '../lib/format.js';
 
@@ -231,17 +230,16 @@ ui.copyHtml.addEventListener('click', async () => {
   }
 });
 
-ui.pickElement.addEventListener('click', async () => {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: currentTab.id },
-      func: elementInspectorRunner,
-      args: [{ deliver: 'clipboard' }]
-    });
-    window.close(); // the page takes over from here
-  } catch (err) {
-    setStatus('Could not start the picker: ' + err.message, true);
-  }
+ui.pickElement.addEventListener('click', () => {
+  // The service worker runs the picker: it outlives this popup, which closes as
+  // soon as the user clicks the page.
+  chrome.runtime.sendMessage({ type: 'start-picker', tabId: currentTab.id }, () => {
+    if (chrome.runtime.lastError) {
+      setStatus('Could not start the picker: ' + chrome.runtime.lastError.message, true);
+      return;
+    }
+    window.close();
+  });
 });
 
 ui.exportZip.addEventListener('click', async () => {

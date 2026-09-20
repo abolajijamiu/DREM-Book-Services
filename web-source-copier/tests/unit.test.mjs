@@ -12,6 +12,7 @@ import { ZipWriter, sanitizeZipPath } from '../src/lib/zip.js';
 import { formatJs, formatCss, formatHtml, formatJson } from '../src/lib/format.js';
 import { extractOriginalSources, findSourceMappingUrl, normalizeSourcePath } from '../src/lib/sourcemap.js';
 import { kindOf, zipPathForUrl } from '../src/lib/bundle.js';
+import { absolutizeCssUrls } from '../src/lib/picker.js';
 
 globalThis.atob ||= (b64) => Buffer.from(b64, 'base64').toString('binary');
 
@@ -129,6 +130,16 @@ check('kindOf knows php output is a document', kindOf('https://x.test/index.php'
 check('zip path mirrors the url', zipPathForUrl('https://x.test/assets/app.js') === 'files/x.test/assets/app.js');
 check('zip path names directory urls', zipPathForUrl('https://x.test/blog/') === 'files/x.test/blog/index.html');
 check('zip path keeps queries distinct', zipPathForUrl('https://x.test/a.js?v=1') !== zipPathForUrl('https://x.test/a.js?v=2'));
+
+/* ---------------------------------------------------- picker helpers */
+
+const base = 'https://cdn.test/css/site.css';
+check('url() goes absolute against the stylesheet', absolutizeCssUrls('a{background:url(../img/x.png)}', base).includes('https://cdn.test/img/x.png'));
+check('quoted url() is rewritten too', absolutizeCssUrls(".a{background:url('f/y.svg')}", base).includes("url('https://cdn.test/css/f/y.svg')"));
+check('absolute url() is left alone', absolutizeCssUrls('a{background:url(https://other.test/a.png)}', base).includes('https://other.test/a.png'));
+check('data: url() is left alone', absolutizeCssUrls('a{background:url(data:image/png;base64,AAA)}', base).includes('url(data:image/png;base64,AAA)'));
+check('protocol-relative url() is left alone', absolutizeCssUrls('a{background:url(//x.test/a.png)}', base).includes('url(//x.test/a.png)'));
+check('no base leaves css untouched', absolutizeCssUrls('a{background:url(x.png)}', '') === 'a{background:url(x.png)}');
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(failed ? `\n${failed} failing` : '\nall unit checks passed');

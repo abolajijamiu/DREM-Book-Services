@@ -41,7 +41,10 @@ your capture is the site's actual development source.
 - **Pick an element** — closes the popup, hands you a crosshair; click anything
   and its HTML plus *only the CSS that matches it and its children* (plus the
   `@font-face`/`@keyframes` in scope and its non-default computed styles) lands
-  on your clipboard.
+  on your clipboard. Cross-origin stylesheets are fetched and re-parsed first,
+  so CDN-hosted rules are in the snippet too, credited to the sheet they came
+  from — and their relative `url()` references are rewritten to absolute, so the
+  snippet still renders when you paste it elsewhere.
 
 **Export**
 - **Export capture (.zip)** — the whole site as the browser sees it, written
@@ -88,6 +91,8 @@ binary assets.
 | Cross-origin stylesheets throw on `sheet.cssRules` | The extension refetches them with host permissions (service worker for the popup's CSS copy, direct `fetch` from the extension page for exports) |
 | "Which rules are actually used?" | Every selector is tested against the live DOM with `querySelector`, recursing into `@media`/`@supports`/`@container` and dropping emptied groups. Pseudo-elements and state pseudo-classes are stripped first, so `a:hover` survives as long as an `a` exists |
 | XHR/API bodies are not refetchable | The DevTools panel reads them out of the network recording (`getContent`) instead |
+| The element picker runs *in* the page, where cross-origin CSS is unreadable | The extension fetches those sheets before the picker starts and passes the text in; the picker re-parses them as constructed stylesheets and matches against them like any other source |
+| The popup closes the instant you click the page | The service worker owns the picker injection, so it outlives the popup; the page copies from inside its own click handler, where the clipboard is allowed |
 | Minified bundles are unreadable | Tokenizer-based formatters that only ever *insert* whitespace — strings, comments, regex literals and template literals are passed through untouched |
 | ZIP without a library | `CompressionStream('deflate-raw')` plus a hand-written central directory |
 | Original sources | `sourceMappingURL` (including inline `data:` maps and index maps with `sections`) → `sourcesContent` → a real folder tree |
@@ -128,6 +133,7 @@ src/
     css-collector.js      page-side CSS walker           (injected)
     page-inventory.js     page-side resource inventory   (injected)
     element-inspector.js  page-side element picker       (injected)
+    picker.js             picker driver: fetches the CSS the page cannot read
     bundle.js             capture pipeline → ZIP
     zip.js                ZIP writer (deflate-raw)
     format.js             JS/CSS/HTML/JSON pretty-printers
@@ -167,9 +173,6 @@ panel's `chrome.devtools` host object. Everything below those is shipped code.
 - Browser-internal pages (`chrome://`, the extension store, the PDF viewer)
   cannot be scripted.
 - Closed shadow roots are invisible to any extension by design.
-- The element picker's CSS comes from stylesheets the page can read; a
-  cross-origin sheet's rules show up in **Copy CSS** and in exports, not in a
-  pick.
 - `@import` inside a *fetched* cross-origin stylesheet is not followed.
 - Files over 12 MB are skipped by the exporter (configurable in `bundle.js`).
 - Keep the popup open while an export runs; long captures belong in the panel.

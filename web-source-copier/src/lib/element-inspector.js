@@ -13,6 +13,20 @@ export function elementInspectorRunner(request) {
   const deliver = (request && request.deliver) || 'return';
   const ID = '__web_source_copier_picker__';
 
+  // Stylesheets the page itself cannot read (cross-origin, no CORS headers).
+  // The extension fetched them for us; re-parse them here so their rules can be
+  // matched against the picked element like any other source.
+  const externalSheets = [];
+  ((request && request.externalCss) || []).forEach((entry) => {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(entry.css);
+      externalSheets.push({ label: entry.href, rules: sheet.cssRules });
+    } catch (err) {
+      /* unparseable stylesheet: skipped */
+    }
+  });
+
   const previous = document.getElementById(ID);
   if (previous) previous.remove();
 
@@ -97,45 +111,50 @@ export function elementInspectorRunner(request) {
         }
       });
 
-    const walk = (rules, wrapper) => {
+    const walk = (rules, wrapper, source) => {
       for (const rule of rules) {
         if (rule instanceof CSSStyleRule) {
-          if (matchesAny(rule.selectorText)) hits.push({ wrapper, text: rule.cssText });
+          if (matchesAny(rule.selectorText)) hits.push({ wrapper, source, text: rule.cssText });
         } else if (typeof CSSGroupingRule !== 'undefined' && rule instanceof CSSGroupingRule) {
           const prelude = rule.cssText.slice(0, rule.cssText.indexOf('{') + 1).trim();
-          walk(rule.cssRules, wrapper ? wrapper + '\n' + prelude : prelude);
+          walk(rule.cssRules, wrapper ? wrapper + '\n' + prelude : prelude, source);
         } else if (rule instanceof CSSFontFaceRule || (typeof CSSKeyframesRule !== 'undefined' && rule instanceof CSSKeyframesRule)) {
-          hits.push({ wrapper: '', text: rule.cssText, atRule: true });
+          hits.push({ wrapper: '', source, text: rule.cssText, atRule: true });
         }
       }
     };
 
     Array.from(document.styleSheets).forEach((sheet) => {
       try {
-        walk(sheet.cssRules, '');
+        walk(sheet.cssRules, '', '');
       } catch (err) {
-        /* cross-origin sheet: skipped here, the full export still fetches it */
+        /* unreadable here; the same sheet arrives below via externalSheets */
       }
     });
+    externalSheets.forEach((sheet) => walk(sheet.rules, '', sheet.label));
 
     const grouped = new Map();
     hits.forEach((hit) => {
       if (hit.atRule) return;
-      const list = grouped.get(hit.wrapper) || [];
+      const key = hit.source + '\u0000' + hit.wrapper;
+      const list = grouped.get(key) || [];
       list.push(hit.text);
-      grouped.set(hit.wrapper, list);
+      grouped.set(key, list);
     });
 
     const chunks = [];
-    grouped.forEach((list, wrapper) => {
+    grouped.forEach((list, key) => {
+      const source = key.split('\u0000')[0];
+      const wrapper = key.slice(source.length + 1);
+      const banner = source ? '/* from ' + source + ' */\n' : '';
       const body = list.join('\n\n');
       if (!wrapper) {
-        chunks.push(body);
+        chunks.push(banner + body);
         return;
       }
       const opens = wrapper.split('\n');
       const indented = body.split('\n').map((line) => (line ? '  '.repeat(opens.length) + line : line)).join('\n');
-      chunks.push(opens.join(' {\n') + '\n' + indented + '\n' + opens.map(() => '}').join('\n'));
+      chunks.push(banner + opens.join(' {\n') + '\n' + indented + '\n' + opens.map(() => '}').join('\n'));
     });
 
     const fontFaces = hits.filter((hit) => hit.atRule).map((hit) => hit.text);
@@ -200,7 +219,7 @@ export function elementInspectorRunner(request) {
       '',
       '/* ---------- CSS rules that match this element or its children ---------- */',
       '',
-      css || '/* none — this element is styled only inline or by cross-origin CSS */'
+      css || '/* none — this element carries no matching rules (inline styles only?) */'
     ];
     if (atRules.length) {
       parts.push('', '/* ---------- @font-face / @keyframes in scope ---------- */', '', atRules.join('\n\n'));

@@ -1,7 +1,7 @@
 import { captureSite, kindOf } from '../lib/bundle.js';
 import { formatByKind, formatHtml } from '../lib/format.js';
 import { extractOriginalSources, findSourceMappingUrl } from '../lib/sourcemap.js';
-import { elementInspectorRunner } from '../lib/element-inspector.js';
+import { runPicker } from '../lib/picker.js';
 import { cssCopierRunner } from '../lib/css-collector.js';
 
 const tabId = chrome.devtools.inspectedWindow.tabId;
@@ -320,11 +320,7 @@ el('exportZip').addEventListener('click', async () => {
 el('pickElement').addEventListener('click', async () => {
   setStatus('Click an element in the page (Esc cancels)…');
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: elementInspectorRunner,
-      args: [{ deliver: 'return' }]
-    });
+    const result = await runPicker({ tabId, deliver: 'return' });
     if (!result) return setStatus('Picker cancelled.');
     selected = { url: result.selector, kind: 'style', mimeType: 'text/plain' };
     selectedText = result.text;
