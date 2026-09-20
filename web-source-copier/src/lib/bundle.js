@@ -10,6 +10,7 @@ import { ZipWriter } from './zip.js';
 import { formatByKind } from './format.js';
 import { extractOriginalSources } from './sourcemap.js';
 import { pageInventoryRunner } from './page-inventory.js';
+import { fetchWithTimeout } from './net.js';
 import { cssCopierRunner } from './css-collector.js';
 
 const TEXT_KINDS = new Set(['script', 'style', 'data', 'document']);
@@ -20,7 +21,9 @@ export const DEFAULT_OPTIONS = {
   includeAssets: true,
   usedCssOnly: false,
   includeInlineAttributes: false,
-  maxFileBytes: 12 * 1024 * 1024
+  maxFileBytes: 12 * 1024 * 1024,
+  // One unreachable host must not hold up the whole capture.
+  fetchTimeoutMs: 20000
 };
 
 export function kindOf(url, contentType) {
@@ -33,6 +36,9 @@ export function kindOf(url, contentType) {
   if (type.startsWith('font/') || type.includes('font')) return 'font';
   if (type.startsWith('video/') || type.startsWith('audio/')) return 'media';
   if (type.includes('wasm')) return 'wasm';
+  // Framework payloads with no extension: Next.js RSC flight data
+  // (text/x-component), text/plain APIs, ld+json, atom+xml …
+  if (type.startsWith('text/') || type.includes('+json') || type.includes('+xml')) return 'data';
 
   const ext = (url.split('?')[0].split('#')[0].match(/\.([a-z0-9]+)$/i) || [])[1] || '';
   return (
@@ -89,11 +95,13 @@ function formatBytes(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-async function defaultFetch(url) {
-  let response = await fetch(url, { credentials: 'omit', redirect: 'follow' });
+async function defaultFetch(url, timeoutMs) {
+  const withTimeout = (init) => fetchWithTimeout(url, Object.assign({ redirect: 'follow' }, init), timeoutMs);
+
+  let response = await withTimeout({ credentials: 'omit' });
   if (response.status === 401 || response.status === 403) {
     // Asset behind a login: retry with the site's own cookies.
-    response = await fetch(url, { credentials: 'include', redirect: 'follow' });
+    response = await withTimeout({ credentials: 'include' });
   }
   if (!response.ok) throw new Error('HTTP ' + response.status + ' ' + response.statusText);
   return {
@@ -135,7 +143,7 @@ export async function captureSite(config) {
       const recorded = await config.getBody(url);
       if (recorded && recorded.bytes) return recorded;
     }
-    return defaultFetch(url);
+    return defaultFetch(url, options.fetchTimeoutMs);
   };
   const fetchText = async (url) => {
     const result = await fetchBody(url);

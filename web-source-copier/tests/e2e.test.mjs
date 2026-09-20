@@ -92,6 +92,11 @@ await popup.screenshot({ path: path.join(import.meta.dirname, 'popup-copy.png') 
 /* ------------------------------------------------------- popup: zip export */
 
 await popup.click('.tab[data-pane="export"]');
+// Shorten the fetch guard so the deliberately hung fixture asset resolves fast.
+await popup.evaluate(async () => {
+  const { DEFAULT_OPTIONS } = await import('../lib/bundle.js');
+  DEFAULT_OPTIONS.fetchTimeoutMs = 1500;
+});
 const downloadPromise = popup.waitForEvent('download', { timeout: 60000 });
 await popup.click('#exportZip');
 const download = await downloadPromise;
@@ -120,6 +125,7 @@ check('zip recovers original sources from the map', read('src/demo/src/App.tsx')
 check('zip recovers scss from the map', read('src/demo/src/styles/theme.scss').includes('$brand'));
 check('zip pretty-prints the bundle', read('files/127.0.0.1/app.js').split('\n').length > 4);
 check('report names what a browser cannot capture', read('README.md').includes('PHP'));
+check('a hung asset is reported as a timeout, not a stall', /never-answers.*timed out/.test(read('README.md')), (read('README.md').split('## Not captured')[1] || '').slice(0, 300));
 const inventory = JSON.parse(read('inventory.json') || '{}');
 check('inventory lists resources with paths', Array.isArray(inventory.resources) && inventory.resources.some((r) => r.url.endsWith('/app.js')));
 check(

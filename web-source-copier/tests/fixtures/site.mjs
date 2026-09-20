@@ -29,6 +29,7 @@ const PAGE = (otherPort) => `<!doctype html>
 </head><body>
 <div class="hero external-used remote-used hero-media hero-nested" id="hero"><p class="lead">Fixture</p></div>
 <img src="/logo.png" width="16" height="16" alt="">
+<img data-src="/never-answers" alt="">
 <div style="color: teal">inline attribute</div>
 <iframe src="/frame.html"></iframe>
 <script src="/app.js"></script>
@@ -53,7 +54,13 @@ export function startFixture(mainPort = 8094, otherPort = 8095) {
     '/favicon.ico': ['image/png', ICON]
   };
 
+  const pending = [];
   const main = http.createServer((req, res) => {
+    // A resource the exporter will try to fetch and never get an answer for.
+    if (req.url.startsWith('/never-answers')) {
+      pending.push(res);
+      return;
+    }
     const file = files[req.url.split('?')[0]];
     if (!file) {
       res.writeHead(404);
@@ -72,6 +79,7 @@ export function startFixture(mainPort = 8094, otherPort = 8095) {
   return {
     url: `http://127.0.0.1:${mainPort}/`,
     close: () => {
+      pending.forEach((res) => res.destroy());
       main.close();
       other.close();
     }

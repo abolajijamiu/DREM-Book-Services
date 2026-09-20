@@ -9,6 +9,9 @@
  */
 
 import { elementInspectorRunner } from './element-inspector.js';
+import { fetchWithTimeout } from './net.js';
+
+const FETCH_TIMEOUT_MS = 15000;
 
 /** Injected: which stylesheets does this page refuse to let us read? */
 export function blockedSheetHrefsRunner() {
@@ -58,9 +61,9 @@ export async function fetchExternalCss(tabId) {
   const fetched = await Promise.all(
     hrefs.map(async (href) => {
       try {
-        let response = await fetch(href, { credentials: 'omit' });
+        let response = await fetchWithTimeout(href, { credentials: 'omit' }, FETCH_TIMEOUT_MS);
         if (response.status === 401 || response.status === 403) {
-          response = await fetch(href, { credentials: 'include' });
+          response = await fetchWithTimeout(href, { credentials: 'include' }, FETCH_TIMEOUT_MS);
         }
         if (!response.ok) return null;
         return { href, css: absolutizeCssUrls(await response.text(), href) };

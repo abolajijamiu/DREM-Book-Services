@@ -11,12 +11,14 @@
  */
 
 import { runPicker } from '../lib/picker.js';
+import { fetchWithTimeout } from '../lib/net.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 15000;
 
 async function fetchStylesheet(href) {
   try {
-    const response = await fetch(href, { credentials: 'omit', cache: 'force-cache' });
+    const response = await fetchWithTimeout(href, { credentials: 'omit', cache: 'force-cache' }, FETCH_TIMEOUT_MS);
     if (!response.ok) {
       return { href, error: 'HTTP ' + response.status + ' ' + response.statusText };
     }

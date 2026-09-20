@@ -127,6 +127,10 @@ check('reports unparseable maps', (await extractOriginalSources(async () => 'nop
 check('kindOf uses the content type first', kindOf('https://x.test/a', 'application/javascript; charset=utf-8') === 'script');
 check('kindOf falls back to the extension', kindOf('https://x.test/a/b.woff2', '') === 'font');
 check('kindOf knows php output is a document', kindOf('https://x.test/index.php', '') === 'document');
+check('kindOf classifies Next.js RSC payloads as data', kindOf('https://x.test/page?_rsc=abc', 'text/x-component') === 'data');
+check('kindOf classifies ld+json as data', kindOf('https://x.test/thing', 'application/ld+json') === 'data');
+check('kindOf classifies text/plain as data', kindOf('https://x.test/robots', 'text/plain; charset=utf-8') === 'data');
+check('kindOf still separates html from other text', kindOf('https://x.test/p', 'text/html') === 'document');
 check('zip path mirrors the url', zipPathForUrl('https://x.test/assets/app.js') === 'files/x.test/assets/app.js');
 check('zip path names directory urls', zipPathForUrl('https://x.test/blog/') === 'files/x.test/blog/index.html');
 check('zip path keeps queries distinct', zipPathForUrl('https://x.test/a.js?v=1') !== zipPathForUrl('https://x.test/a.js?v=2'));

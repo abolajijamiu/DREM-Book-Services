@@ -100,8 +100,13 @@ binary assets.
 ## Install (unpacked)
 
 1. `chrome://extensions` → enable **Developer mode**
-2. **Load unpacked** → select this `web-source-copier` folder
+2. **Load unpacked** → select this `web-source-copier` folder (the one with
+   `manifest.json` in it)
 3. Pin it; open any page; click the icon, or open DevTools → **Source Copier**
+
+No build step and no `npm install` — the extension runs as it sits on disk.
+**[docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)** walks through install,
+first use, the panel, updating and troubleshooting in more detail.
 
 Chrome, Edge, Brave, Arc and other Chromium browsers. Firefox needs a
 `browser_specific_settings` key and a background *scripts* entry instead of a
@@ -137,6 +142,7 @@ src/
     bundle.js             capture pipeline → ZIP
     zip.js                ZIP writer (deflate-raw)
     format.js             JS/CSS/HTML/JSON pretty-printers
+    net.js                fetch guards (every request carries a timeout)
     sourcemap.js          source map → original sources
 tests/
   unit.test.mjs           zip, formatters, source maps (Node)
@@ -188,6 +194,14 @@ files, no source maps published, so `src/` is correctly empty. The picker
 returned 393 lines of matching CSS with Tailwind's
 `@layer properties { @supports … }` nesting rebuilt correctly.
 
+**code.claude.com/docs** — a Next.js documentation app, the most complex of the
+three: 4,701 rules across 9 stylesheets (1,267 used), 94 resources archived
+(37 scripts, 15 fonts, RSC flight payloads, a 526 KB chunk pretty-printed to
+10,657 lines), a cross-origin Google Fonts stylesheet the page cannot read, and
+a captured `.woff2` byte-identical to the server. Next.js ships no production
+source maps, so `src/` is empty — correctly. Anything the sandbox's egress
+policy refused is listed in the archive's own `README.md`.
+
 Live runs need the open internet; behind a TLS-intercepting proxy, pass that
 proxy's CA SPKI hashes via `SPKI_PINS` (see the comment at the top of the
 file).
@@ -198,7 +212,9 @@ file).
   cannot be scripted.
 - Closed shadow roots are invisible to any extension by design.
 - `@import` inside a *fetched* cross-origin stylesheet is not followed.
-- Files over 12 MB are skipped by the exporter (configurable in `bundle.js`).
+- Files over 12 MB are skipped by the exporter, and a single asset that does not
+  answer within 20s is recorded as a timeout rather than stalling the capture
+  (both configurable in `bundle.js`).
 - Chromium logs a one-off CSP notice ("Refused to load the script …") the first
   time an extension page fetches a URL the inspected page had preloaded as a
   module. It is cosmetic: the fetch then proceeds normally and the bytes are
