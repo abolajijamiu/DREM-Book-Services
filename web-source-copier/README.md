@@ -48,7 +48,13 @@ your capture is the site's actual development source.
 
 **Export**
 - **Export capture (.zip)** — this page and everything it loads, written
-  client-side (no server, no upload).
+  client-side (no server, no upload). The button becomes **Stop** while it
+  runs; stopping keeps everything already downloaded and says so in the
+  archive's report.
+- **Rewrite links for offline browsing** (on by default) — every captured URL
+  is repointed at its file in the archive, so `rendered-page.html` opens from
+  disk with its styling, fonts and images intact. Anything that was not
+  captured keeps its original address and still works online.
 
 **Site** — capture *several pages* into one archive:
 - lists the pages this page links to (same site only), the current one first
@@ -62,6 +68,9 @@ your capture is the site's actual development source.
 - the page you started from is captured as rendered; the others are captured as
   served, unless you tick **Run each page's JavaScript**, which loads each one
   in a background tab so app-rendered content is included
+- links between captured pages are rewritten too, so the archive browses like a
+  small offline copy of the site
+- **Stop** mid-capture keeps the pages already captured
 
 ### DevTools panel — "Source Copier"
 
@@ -128,6 +137,8 @@ binary assets.
 | ZIP without a library | `CompressionStream('deflate-raw')` plus a hand-written central directory. Already-compressed formats (PNG, WOFF2, MP4 …) are stored rather than deflated — same size, a quarter of the CPU |
 | Capture speed | Downloads run 8 at a time (`concurrency`), identical URLs are de-duplicated in flight, and a host that times out three times is dropped rather than waited on again |
 | Original sources | `sourceMappingURL` (including inline `data:` maps and index maps with `sections`) → `sourcesContent` → a real folder tree |
+| Offline browsing | After everything is stored, a rewrite pass repoints attributes (`src`, `href`, `srcset`, `poster`, inline `style`) and CSS `url()`/`@import` at archive-relative paths, neutralises `<base href>`, and leaves uncaptured URLs absolute |
+| Stopping a capture | An `AbortController` reaches the work pool and every in-flight request; the archive is then sealed with whatever it already has |
 | Which pages may be captured | `robots.txt` parsed per RFC 9309 — user-agent groups, `Allow`/`Disallow`, `*` and `$` patterns, longest-match-wins — consulted before any page is fetched |
 | Pages a fetch cannot render | Optionally loaded in a background tab, read the same way the live page is, then closed |
 
@@ -176,6 +187,7 @@ src/
     site.js               multi-page capture: discovery, crawl, per-page capture
     robots.js             robots.txt parsing (RFC 9309)
     html-scan.js          DOMParser-side scanning of fetched pages
+    rewrite.js            repointing URLs at archive files for offline browsing
   ui/site-picker.js       the page picker, mounted by both surfaces
     bundle.js             capture pipeline → ZIP
     zip.js                ZIP writer (deflate-raw)
@@ -274,6 +286,19 @@ same output.
 Files larger than `maxFormatBytes` (2 MB) are stored as served rather than
 formatted, so one enormous bundle cannot hold up a capture. The archive's
 README says when that happened.
+
+## Offline browsing
+
+![an archived page rendering offline](docs/offline-archive.png)
+
+That is a live capture of pypi.org opened from the archive with every request
+to `pypi.org` blocked: 3 stylesheets, 3,239 rules, its own fonts and logo. The
+test suite proves the same thing on the fixture site by serving the unpacked
+archive and aborting any request that tries to reach the original origin.
+
+Assets that could **not** be captured (a 403, a blocked host) keep their
+original URLs, so an archived page may still reach out for those few files when
+you open it online. The archive's `README.md` lists every one of them.
 
 ## Known limits
 

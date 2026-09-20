@@ -134,7 +134,44 @@ check(
   inventory.resources.map((entry) => entry.path).join(', ')
 );
 
-await popup.setViewportSize({ width: 330, height: 430 });
+/* --------------------------------------------------------- the Stop button */
+
+// Give the deliberately hung fixture asset a long leash, so the capture is
+// still running when Stop is pressed.
+await popup.evaluate(async () => {
+  const { DEFAULT_OPTIONS } = await import('../lib/bundle.js');
+  DEFAULT_OPTIONS.fetchTimeoutMs = 60000;
+});
+
+const stopDownload = popup.waitForEvent('download', { timeout: 30000 });
+await popup.click('#exportZip');
+await popup.waitForFunction(() => document.getElementById('exportZip').textContent === 'Stop', null, { timeout: 10000 });
+check('the export button becomes Stop while running', true);
+
+await popup.waitForTimeout(700);
+const stopStarted = Date.now();
+await popup.click('#exportZip');
+const stoppedFile = await stopDownload;
+const stopSeconds = (Date.now() - stopStarted) / 1000;
+check('stopping returns an archive promptly', stopSeconds < 10, stopSeconds.toFixed(1) + 's');
+
+const stoppedPath = path.join(downloads, 'stopped-' + stoppedFile.suggestedFilename());
+await stoppedFile.saveAs(stoppedPath);
+const stoppedDir = path.join(downloads, 'stopped');
+execSync(`unzip -q -o ${JSON.stringify(stoppedPath)} -d ${JSON.stringify(stoppedDir)}`);
+const stoppedRoot = path.join(stoppedDir, fs.readdirSync(stoppedDir)[0]);
+const stoppedReport = fs.readFileSync(path.join(stoppedRoot, 'README.md'), 'utf8');
+check('a stopped capture still yields what it had', fs.existsSync(path.join(stoppedRoot, 'rendered-page.html')));
+check('the report says it was stopped early', stoppedReport.includes('Stopped early'), stoppedReport.split('\n').slice(0, 4).join(' | '));
+check('the button goes back to Export afterwards', (await popup.textContent('#exportZip')) === 'Export capture (.zip)');
+check('the status line reports the stop', (await popup.textContent('#status')).includes('Stopped'), await popup.textContent('#status'));
+
+/* ------------------------------------------- offline rewriting, single page */
+
+check('rendered page points at archived assets', /(src|href)="files\/127\.0\.0\.1\//.test(read('rendered-page.html')), (read('rendered-page.html').match(/<link[^>]*>/g) || []).join(' '));
+check('a cross-origin stylesheet is repointed too', read('rendered-page.html').includes('files/127.0.0.1/') && !/href="http:\/\/127\.0\.0\.1:8094\/site\.css"/.test(read('rendered-page.html')));
+
+await popup.setViewportSize({ width: 330, height: 460 });
 await popup.screenshot({ path: path.join(import.meta.dirname, 'popup-export.png') });
 check('popup raised no console errors', errors.length === 0, errors.join('\n      '));
 

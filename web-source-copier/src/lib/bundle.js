@@ -12,6 +12,7 @@ import { extractOriginalSources } from './sourcemap.js';
 import { pageInventoryRunner } from './page-inventory.js';
 import { fetchWithTimeout, forEachPooled } from './net.js';
 import { cssUrlReferences } from './html-scan.js';
+import { rewriteHtml, rewriteCss } from './rewrite.js';
 import { cssCopierRunner } from './css-collector.js';
 
 const TEXT_KINDS = new Set(['script', 'style', 'data', 'document']);
@@ -34,7 +35,9 @@ export const DEFAULT_OPTIONS = {
   fetchTimeoutMs: 20000,
   // Site capture follows url() references out of fetched stylesheets, since
   // there is no live CSSOM to read them from.
-  followCssUrls: false
+  followCssUrls: false,
+  // Repoint captured URLs at their files so the archive browses offline.
+  rewriteLinks: true
 };
 
 export function kindOf(url, contentType) {
@@ -106,8 +109,8 @@ function formatBytes(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
-async function defaultFetch(url, timeoutMs) {
-  const withTimeout = (init) => fetchWithTimeout(url, Object.assign({ redirect: 'follow' }, init), timeoutMs);
+async function defaultFetch(url, timeoutMs, signal) {
+  const withTimeout = (init) => fetchWithTimeout(url, Object.assign({ redirect: 'follow' }, init), timeoutMs, signal);
 
   let response = await withTimeout({ credentials: 'omit' });
   if (response.status === 401 || response.status === 403) {
@@ -150,7 +153,7 @@ export function createCapture(config) {
       const recorded = await config.getBody(url);
       if (recorded && recorded.bytes) return recorded;
     }
-    return defaultFetch(url, options.fetchTimeoutMs);
+    return defaultFetch(url, options.fetchTimeoutMs, config.signal);
   };
   const fetchText = async (url) => {
     const result = await fetchBody(url);
@@ -172,6 +175,10 @@ export function createCapture(config) {
     fetchBody,
     fetchText,
     root,
+    signal: config.signal || null,
+    // HTML and CSS are written at the end: rewriting their links needs the
+    // finished url -> archive path map.
+    deferred: [],
     zip: new ZipWriter(),
     stats: { files: 0, bytes: 0, byKind: {}, failures: [], sourceFiles: 0, maps: 0 },
     storedResources: new Map(), // url -> archive path (deduplicates across pages)
@@ -206,6 +213,7 @@ function hostOf(url) {
 
 async function fetchIntoArchive(ctx, resource) {
   const { options, stats } = ctx;
+  if (ctx.signal && ctx.signal.aborted) return null;
   const host = hostOf(resource.url);
   const strikes = ctx.hostTimeouts.get(host) || 0;
 
@@ -248,9 +256,22 @@ async function fetchIntoArchive(ctx, resource) {
     stored = formatKind ? formatByKind(formatKind, text) : text;
   }
 
-  const writtenAs = await ctx.zip.add(ctx.root + '/' + zipPathForUrl(resource.url), stored, {
-    store: !isText && isAlreadyCompressed(resource.url, body.contentType)
-  });
+  const deferRewrite = options.rewriteLinks && isText && (kind === 'style' || kind === 'document');
+  let writtenAs;
+  if (deferRewrite) {
+    // Reserve the name now (so nothing else takes it), write the text later.
+    writtenAs = ctx.zip.reservePath(ctx.root + '/' + zipPathForUrl(resource.url));
+    ctx.deferred.push({
+      name: writtenAs,
+      kind: kind === 'style' ? 'css' : 'html',
+      text: String(stored),
+      sourceUrl: resource.url
+    });
+  } else {
+    writtenAs = await ctx.zip.add(ctx.root + '/' + zipPathForUrl(resource.url), stored, {
+      store: !isText && isAlreadyCompressed(resource.url, body.contentType)
+    });
+  }
   const archivePath = writtenAs.slice(ctx.root.length + 1);
   ctx.storedResources.set(resource.url, archivePath);
   stats.files++;
@@ -327,7 +348,13 @@ export async function captureSite(config) {
   const top = frames.find((frame) => frame.isTopFrame) || frames[0];
 
   // One context, shared by every step below — the same one site capture uses.
-  const ctx = createCapture({ primaryUrl: top.url, options: config.options, onProgress, getBody: config.getBody });
+  const ctx = createCapture({
+    primaryUrl: top.url,
+    options: config.options,
+    onProgress,
+    getBody: config.getBody,
+    signal: config.signal
+  });
   const { options, stats } = ctx;
 
   const resources = new Map();
@@ -347,18 +374,24 @@ export async function captureSite(config) {
   const skippedKinds = options.includeAssets ? new Set() : new Set(['image', 'font', 'media']);
   const queue = Array.from(resources.values()).filter((resource) => !skippedKinds.has(resource.kind));
 
-  // 1. The page itself, as rendered and as served.
+  // 1. The page itself, as rendered and as served. Both are held back so the
+  //    rewrite pass can repoint them at the files next to them.
   const renderedHtml = options.prettyPrint ? formatByKind('html', top.renderedHtml) : top.renderedHtml;
-  await ctx.zip.add(ctx.root + '/rendered-page.html', renderedHtml);
+  const renderedName = ctx.zip.reservePath(ctx.root + '/rendered-page.html');
+  ctx.deferred.push({ name: renderedName, kind: 'html', text: renderedHtml, sourceUrl: top.url });
   stats.files++;
+  ctx.pages.push({ url: top.url, title: top.title || '', path: 'rendered-page.html', mode: 'rendered', status: 'captured' });
 
   try {
     const original = await ctx.fetchBody(top.url);
     const originalText = decodeText(original.bytes);
-    await ctx.zip.add(
-      ctx.root + '/original-page.html',
-      options.prettyPrint ? formatByKind('html', originalText) : originalText
-    );
+    const originalName = ctx.zip.reservePath(ctx.root + '/original-page.html');
+    ctx.deferred.push({
+      name: originalName,
+      kind: 'html',
+      text: options.prettyPrint ? formatByKind('html', originalText) : originalText,
+      sourceUrl: top.url
+    });
     stats.files++;
   } catch (err) {
     stats.failures.push({ url: top.url, error: 'original HTML: ' + err.message });
@@ -417,15 +450,24 @@ export async function captureSite(config) {
 
   // 4. Every resource the page uses, a few at a time.
   let done = 0;
-  await forEachPooled(queue, options.concurrency, async (resource) => {
-    done++;
-    onProgress({
-      message: 'Downloading ' + resource.url.split('/').pop().slice(0, 40),
-      done,
-      total: queue.length
-    });
-    await addResource(ctx, resource);
-  });
+  await forEachPooled(
+    queue,
+    options.concurrency,
+    async (resource) => {
+      done++;
+      onProgress({
+        message: 'Downloading ' + resource.url.split('/').pop().slice(0, 40),
+        done,
+        total: queue.length
+      });
+      await addResource(ctx, resource);
+    },
+    ctx.signal
+  );
+
+  if (ctx.signal && ctx.signal.aborted) {
+    stats.stopped = { after: done, of: queue.length };
+  }
 
   // Stable order in the report, whatever order the downloads finished in.
   ctx.manifestRows.sort((a, b) => a.path.localeCompare(b.path));
@@ -441,6 +483,7 @@ export async function captureSite(config) {
 
 /** Writes the report, the inventory and the page index, then seals the archive. */
 export async function finishCapture(ctx, meta) {
+  await flushDeferred(ctx);
   const report = meta && meta.mode === 'site' ? buildSiteReport(ctx, meta) : meta.report;
   await ctx.zip.add(ctx.root + '/README.md', report);
   await ctx.zip.add(
@@ -467,6 +510,34 @@ export async function finishCapture(ctx, meta) {
     pages: ctx.pages,
     resourceCount: ctx.manifestRows.length
   };
+}
+
+/**
+ * Writes the HTML and CSS held back for rewriting, now that every captured URL
+ * has a known home in the archive.
+ */
+async function flushDeferred(ctx) {
+  const map = new Map();
+  ctx.storedResources.forEach((archivePath, url) => {
+    if (archivePath) map.set(url, archivePath);
+  });
+  ctx.pages.forEach((page) => {
+    if (page.path && page.url) map.set(page.url, page.path);
+  });
+  const lookup = (url) => map.get(url) || null;
+
+  for (const entry of ctx.deferred) {
+    const fromPath = entry.name.slice(ctx.root.length + 1);
+    let text = entry.text;
+    if (ctx.options.rewriteLinks) {
+      text =
+        entry.kind === 'css'
+          ? rewriteCss(text, { baseUrl: entry.sourceUrl, fromPath, lookup })
+          : rewriteHtml(text, { pageUrl: entry.sourceUrl, fromPath, lookup });
+    }
+    await ctx.zip.add(entry.name, text, { preserveName: true });
+  }
+  ctx.deferred = [];
 }
 
 const SERVER_SIDE_NOTE = `## What a browser can never give you
@@ -519,7 +590,7 @@ function buildSiteReport(ctx, meta) {
         : 'robots.txt could not be read, so nothing was excluded.';
 
   return `# Site capture of ${meta.origin}
-
+${stats.stopped ? '\n> **Stopped early.** You pressed Stop; the pages below are what had been captured.\n' : ''}
 - **Started from:** ${meta.primaryUrl}
 - **Captured:** ${new Date().toISOString()}
 - **Pages captured:** ${captured.length} of ${pages.length} selected
@@ -535,8 +606,11 @@ ${robotsLine}
 ## Pages
 
 Each page's HTML is under \`pages/\`. Assets shared between pages are stored once
-in \`files/\`, so the archive does not repeat a stylesheet fifty times. Links
-inside the HTML are **not** rewritten — they still point at the live site.
+in \`files/\`, so the archive does not repeat a stylesheet fifty times.
+
+${options.rewriteLinks
+  ? 'Links were **rewritten for offline browsing**: every URL that was captured now points at its file in this archive, so you can open a page straight from disk. Anything that was *not* captured keeps its original address and still needs the internet.'
+  : 'Links were **not** rewritten — they still point at the live site.'}
 
 | Page | File | How | Result |
 | --- | --- | --- | --- |
@@ -567,6 +641,10 @@ ${SERVER_SIDE_NOTE}`;
 }
 
 function buildReport({ top, stats, manifestRows, options, frames }) {
+  const stoppedNote = stats.stopped
+    ? '\n> **Stopped early.** You pressed Stop after ' + stats.stopped.after + ' of ' + stats.stopped.of +
+      ' resources. Everything already downloaded is in this archive.\n'
+    : '';
   const byKind = Object.entries(stats.byKind)
     .sort((a, b) => b[1] - a[1])
     .map(([kind, count]) => '| ' + kind + ' | ' + count + ' |')
@@ -584,7 +662,7 @@ function buildReport({ top, stats, manifestRows, options, frames }) {
     .join('\n');
 
   return `# Capture of ${top.url}
-
+${stoppedNote}
 - **Captured:** ${new Date().toISOString()}
 - **Page title:** ${top.title || '(none)'}
 - **Frames scanned:** ${frames.length}

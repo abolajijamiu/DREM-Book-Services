@@ -45,7 +45,9 @@ export function mountSitePicker(config) {
     selected: new Set(),
     limit: SITE_DEFAULTS.maxPages,
     renderPages: false,
-    busy: false
+    rewriteLinks: true,
+    busy: false,
+    controller: null
   };
 
   container.innerHTML = '';
@@ -72,13 +74,19 @@ export function mountSitePicker(config) {
   const moreButton = el('button', null, 'Find more pages');
   controls.append(limitWrap, fillButton, clearButton, moreButton);
 
-  const renderWrap = el('label', 'check');
+  const renderWrap = el('label', 'check picker-render');
   const renderInput = document.createElement('input');
   renderInput.type = 'checkbox';
   renderWrap.append(renderInput, el('span', null, 'Run each page’s JavaScript (slower; needed for app-rendered sites)'));
 
+  const rewriteWrap = el('label', 'check picker-rewrite');
+  const rewriteInput = document.createElement('input');
+  rewriteInput.type = 'checkbox';
+  rewriteInput.checked = true;
+  rewriteWrap.append(rewriteInput, el('span', null, 'Rewrite links so the archive browses offline'));
+
   const captureButton = el('button', 'primary wide', 'Capture 0 pages (.zip)');
-  footer.append(renderWrap, captureButton);
+  footer.append(renderWrap, rewriteWrap, captureButton);
 
   /* ------------------------------------------------------------- render */
 
@@ -87,6 +95,13 @@ export function mountSitePicker(config) {
   }
 
   function updateCounts() {
+    if (state.controller) {
+      captureButton.textContent = 'Stop';
+      captureButton.classList.remove('primary');
+      captureButton.disabled = false;
+      return;
+    }
+    captureButton.classList.add('primary');
     const blocked = state.pages.length - allowedPages().length;
     summary.textContent =
       state.pages.length +
@@ -165,6 +180,10 @@ export function mountSitePicker(config) {
     state.renderPages = renderInput.checked;
   });
 
+  rewriteInput.addEventListener('change', () => {
+    state.rewriteLinks = rewriteInput.checked;
+  });
+
   moreButton.addEventListener('click', async () => {
     if (state.busy) return;
     state.busy = true;
@@ -197,8 +216,15 @@ export function mountSitePicker(config) {
   });
 
   captureButton.addEventListener('click', async () => {
+    if (state.controller) {
+      // Running: this click is Stop. The archive keeps what it already has.
+      state.controller.abort();
+      config.setStatus('Stopping — saving the pages captured so far…');
+      return;
+    }
     if (state.busy || !state.selected.size) return;
     state.busy = true;
+    state.controller = new AbortController();
     updateCounts();
 
     // Capture in the order they were discovered, the current page first.
@@ -212,9 +238,11 @@ export function mountSitePicker(config) {
         urls,
         robots: state.robots,
         getBody: config.getBody,
+        signal: state.controller.signal,
         options: Object.assign({}, config.getOptions ? config.getOptions() : {}, {
           maxPages: state.limit,
-          renderPages: state.renderPages
+          renderPages: state.renderPages,
+          rewriteLinks: state.rewriteLinks
         }),
         onProgress: (progress) => {
           config.setStatus(progress.message);
@@ -226,7 +254,8 @@ export function mountSitePicker(config) {
       const captured = result.pages.filter((page) => page.status === 'captured').length;
       const failed = result.pages.length - captured;
       config.setStatus(
-        'Saved ' + result.filename + ' — ' + captured + ' page(s), ' + result.stats.files + ' files' +
+        (result.stats.stopped ? 'Stopped. Saved ' : 'Saved ') +
+          result.filename + ' — ' + captured + ' page(s), ' + result.stats.files + ' files' +
           (result.stats.sourceFiles ? ', ' + result.stats.sourceFiles + ' original sources' : '') +
           (failed ? ', ' + failed + ' page(s) skipped or failed (see README.md)' : '') + '.'
       );
@@ -234,6 +263,7 @@ export function mountSitePicker(config) {
       config.setStatus('Site capture failed: ' + err.message, true);
     } finally {
       state.busy = false;
+      state.controller = null;
       updateCounts();
     }
   });

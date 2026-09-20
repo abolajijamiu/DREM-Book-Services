@@ -88,6 +88,15 @@ Press **Esc** to cancel.
 popup open while it runs (clicking the page closes any Chrome popup); for big
 sites, use the DevTools panel instead.
 
+While a capture runs the button reads **Stop**. Pressing it keeps everything
+already downloaded and saves that as the archive — the report inside says it
+was stopped early.
+
+**Rewrite links for offline browsing** is on by default. With it, open
+`rendered-page.html` (or any file under `pages/`) straight from the unzipped
+folder and the page renders with its own CSS, fonts and images, no internet
+needed. Files the capture could not fetch keep their original web addresses.
+
 **Site tab — capturing more than one page**
 
 1. Open it. The extension reads the links already on the page and the site's
@@ -106,7 +115,8 @@ sites, use the DevTools panel instead.
 
 Each page's HTML lands in `pages/`, and assets shared between pages — the
 stylesheet, the fonts, the bundle — are stored **once** in `files/`. Links
-inside the saved HTML still point at the live site; they are not rewritten.
+between captured pages are rewritten, so opening `pages/index.html` from disk
+lets you click through the archived site offline.
 
 ## 5. The DevTools panel — where the deep work happens
 
@@ -176,6 +186,8 @@ reload the same way.)
 | Assets missing from the ZIP | Check `README.md` in the archive: it names each failure (403, 404, CORS, size limit). |
 | A page you wanted is greyed out | The site's `robots.txt` disallows it. |
 | A captured page looks empty | It builds its content in the browser — recapture with **Run each page's JavaScript** ticked. |
+| An archived page still loads something from the web | That asset was not captured (403, 404, blocked host), so its original URL was left in place. The archive's `README.md` lists them. |
+| A capture is taking too long | Press **Stop** — you keep everything downloaded so far. |
 | Icon greyed out after a Chrome restart | The extension folder moved or was deleted. Keep it somewhere permanent and reload it. |
 | "Errors" badge on `chrome://extensions` | Click **Errors** to see the message. Usually the wrong folder was loaded. |
 

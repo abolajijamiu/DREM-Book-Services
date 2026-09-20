@@ -190,13 +190,18 @@ export async function captureSelectedPages(config) {
     primaryUrl,
     options: Object.assign({}, options, { followCssUrls: true }),
     onProgress,
-    getBody: config.getBody
+    getBody: config.getBody,
+    signal: config.signal
   });
 
   let blockedByRobots = 0;
   let index = 0;
 
   for (const url of urls) {
+    if (config.signal && config.signal.aborted) {
+      ctx.stats.stopped = { after: index, of: urls.length };
+      break;
+    }
     index++;
     onProgress({ message: 'Page ' + index + ' of ' + urls.length + ': ' + url, done: index - 1, total: urls.length });
 
@@ -242,7 +247,9 @@ export async function captureSelectedPages(config) {
     }
 
     const html = options.prettyPrint ? formatByKind('html', descriptor.renderedHtml) : descriptor.renderedHtml;
-    const written = await ctx.zip.add(ctx.root + '/' + pagePathFor(url), html);
+    // Held back: the rewrite pass needs every page's archive path first.
+    const written = ctx.zip.reservePath(ctx.root + '/' + pagePathFor(url));
+    ctx.deferred.push({ name: written, kind: 'html', text: html, sourceUrl: url });
     ctx.stats.files++;
 
     const slug = pagePathFor(url).replace(/^pages\//, '').replace(/\.html?$/i, '');
@@ -258,10 +265,15 @@ export async function captureSelectedPages(config) {
     const wanted = (descriptor.resources || []).filter(
       (resource) => !skipKinds.has(resource.kind || kindOf(resource.url, ''))
     );
-    await forEachPooled(wanted, options.concurrency, async (resource) => {
-      const stored_path = await addResource(ctx, resource);
-      if (stored_path) stored++;
-    });
+    await forEachPooled(
+      wanted,
+      options.concurrency,
+      async (resource) => {
+        const storedPath = await addResource(ctx, resource);
+        if (storedPath) stored++;
+      },
+      config.signal
+    );
 
     ctx.pages.push({
       url,

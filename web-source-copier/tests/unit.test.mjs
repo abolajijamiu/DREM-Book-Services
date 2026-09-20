@@ -16,6 +16,7 @@ import { absolutizeCssUrls } from '../src/lib/picker.js';
 import { parseRobots, rulesFor, isAllowedPath, loadRobots } from '../src/lib/robots.js';
 import { pagePathFor } from '../src/lib/site.js';
 import { normalizePageUrl, cssUrlReferences } from '../src/lib/html-scan.js';
+import { relativePath, rewriteHtml, rewriteCss } from '../src/lib/rewrite.js';
 
 globalThis.atob ||= (b64) => Buffer.from(b64, 'base64').toString('binary');
 
@@ -197,6 +198,51 @@ check('normalizePageUrl rejects javascript:', normalizePageUrl('javascript:void(
 check('css url() references resolve against the sheet', cssUrlReferences('a{background:url(../i/x.png)}', 'https://x.test/css/s.css')[0] === 'https://x.test/i/x.png');
 check('css url() skips data URIs', cssUrlReferences('a{background:url(data:image/png;base64,AA)}', 'https://x.test/s.css').length === 0);
 check('css @import is followed', cssUrlReferences('@import "more.css";', 'https://x.test/css/s.css')[0] === 'https://x.test/css/more.css');
+
+/* ------------------------------------------------------ offline rewriting */
+
+check('relative path within a folder', relativePath('pages/a.html', 'pages/b.html') === 'b.html');
+check('relative path up and across', relativePath('pages/index.html', 'files/x/app.css') === '../files/x/app.css');
+check('relative path from a deep page', relativePath('pages/docs/en/overview.html', 'files/x/a.js') === '../../../files/x/a.js');
+check('relative path from the archive root', relativePath('rendered-page.html', 'files/x/a.js') === 'files/x/a.js');
+
+const archive = {
+  'https://s.test/style.css': 'files/s.test/style.css',
+  'https://s.test/img/logo.png': 'files/s.test/img/logo.png',
+  'https://s.test/img/logo@2x.png': 'files/s.test/img/logo@2x.png',
+  'https://s.test/about': 'pages/about.html'
+};
+const lookup = (url) => archive[url] || null;
+const pageHtml = [
+  '<!doctype html><html><head><base href="https://s.test/">',
+  '<link rel="stylesheet" href="/style.css">',
+  '<style>.a{background:url(/img/logo.png)}</style></head><body>',
+  '<img src="/img/logo.png" srcset="/img/logo.png 1x, /img/logo@2x.png 2x" alt="">',
+  '<a href="/about">About</a><a href="/about#team">Team</a><a href="/missing">Missing</a>',
+  '<a href="https://other.test/x">External</a><a href="mailto:a@b.c">Mail</a>',
+  '<div style="background:url(/img/logo.png)"></div></body></html>'
+].join('\n');
+const rewritten = rewriteHtml(pageHtml, { pageUrl: 'https://s.test/', fromPath: 'pages/index.html', lookup });
+
+check('rewrite repoints a stylesheet', rewritten.includes('href="../files/s.test/style.css"'));
+check('rewrite repoints an image', rewritten.includes('src="../files/s.test/img/logo.png"'));
+check('rewrite repoints every srcset candidate', rewritten.includes('srcset="../files/s.test/img/logo.png 1x, ../files/s.test/img/logo@2x.png 2x"'));
+check('rewrite links captured pages to their files', rewritten.includes('href="about.html"'));
+check('rewrite keeps a fragment on a page link', rewritten.includes('href="about.html#team"'));
+check('rewrite leaves uncaptured pages absolute', rewritten.includes('href="/missing"'));
+check('rewrite leaves external links alone', rewritten.includes('href="https://other.test/x"'));
+check('rewrite leaves mailto: alone', rewritten.includes('href="mailto:a@b.c"'));
+check('rewrite neutralises <base href>', rewritten.includes('data-original-href="https://s.test/"') && !/<base[^>]*\shref=/i.test(rewritten));
+check('rewrite handles url() in a <style> block', rewritten.includes('url(../files/s.test/img/logo.png)'));
+check('rewrite handles url() in a style attribute', rewritten.includes('style="background:url(../files/s.test/img/logo.png)"'));
+
+const sheet = rewriteCss(
+  '@import "other.css";\n.a{background:url("img/logo.png")}\n.b{background:url(/missing.png)}\n.c{background:url(data:image/png;base64,AA)}',
+  { baseUrl: 'https://s.test/style.css', fromPath: 'files/s.test/style.css', lookup }
+);
+check('css rewrite resolves against the stylesheet', sheet.includes('url("img/logo.png")'));
+check('css rewrite leaves uncaptured urls alone', sheet.includes('url(/missing.png)'));
+check('css rewrite leaves data URIs alone', sheet.includes('url(data:image/png;base64,AA)'));
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(failed ? `\n${failed} failing` : '\nall unit checks passed');

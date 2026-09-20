@@ -21,6 +21,7 @@ const ui = {
   optPretty: el('optPretty'),
   optSourceMaps: el('optSourceMaps'),
   optAssets: el('optAssets'),
+  optRewrite: el('optRewrite'),
   progress: el('progress'),
   progressBar: el('progressBar'),
   previewWrap: el('previewWrap'),
@@ -244,18 +245,31 @@ ui.pickElement.addEventListener('click', () => {
   });
 });
 
+let exportController = null;
+
 ui.exportZip.addEventListener('click', async () => {
-  ui.exportZip.disabled = true;
+  if (exportController) {
+    // Second click while running: stop, and keep whatever is already downloaded.
+    exportController.abort();
+    setStatus('Stopping — saving what has been captured so far…');
+    return;
+  }
+
+  exportController = new AbortController();
+  ui.exportZip.textContent = 'Stop';
+  ui.exportZip.classList.remove('primary');
   ui.progress.hidden = false;
   ui.progressBar.style.width = '2%';
 
   try {
     const { blob, stats, filename, resourceCount } = await captureSite({
       tabId: currentTab.id,
+      signal: exportController.signal,
       options: {
         prettyPrint: ui.optPretty.checked,
         sourceMaps: ui.optSourceMaps.checked,
         includeAssets: ui.optAssets.checked,
+        rewriteLinks: ui.optRewrite.checked,
         usedCssOnly: ui.usedOnly.checked,
         includeInlineAttributes: ui.includeInline.checked
       },
@@ -269,13 +283,16 @@ ui.exportZip.addEventListener('click', async () => {
     const recovered = stats.sourceFiles ? ', ' + stats.sourceFiles + ' original sources recovered' : '';
     const failed = stats.failures.length ? ', ' + stats.failures.length + ' failed (listed in README.md)' : '';
     setStatus(
-      'Saved ' + filename + ' — ' + stats.files + ' files from ' + resourceCount + ' resources' + recovered + failed + '.'
+      (stats.stopped ? 'Stopped after ' + stats.stopped.after + ' of ' + stats.stopped.of + ' resources. Saved ' : 'Saved ') +
+        filename + ' — ' + stats.files + ' files from ' + resourceCount + ' resources' + recovered + failed + '.'
     );
   } catch (err) {
     setStatus('Export failed: ' + err.message, true);
   } finally {
+    exportController = null;
     ui.progressBar.style.width = '100%';
-    ui.exportZip.disabled = false;
+    ui.exportZip.textContent = 'Export capture (.zip)';
+    ui.exportZip.classList.add('primary');
     setTimeout(() => {
       ui.progress.hidden = true;
       ui.progressBar.style.width = '0';

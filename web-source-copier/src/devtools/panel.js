@@ -26,7 +26,8 @@ const ui = {
   progressBar: el('progressBar'),
   optPretty: el('optPretty'),
   optSourceMaps: el('optSourceMaps'),
-  optAssets: el('optAssets')
+  optAssets: el('optAssets'),
+  optRewrite: el('optRewrite')
 };
 
 /** url -> { url, kind, mimeType, size, status, method, entry } */
@@ -279,18 +280,30 @@ ui.saveFile.addEventListener('click', async () => {
   saveBlob(new Blob([body.bytes], { type: selected.mimeType || 'application/octet-stream' }), nameOf(selected.url));
 });
 
+let exportController = null;
+
 el('exportZip').addEventListener('click', async () => {
   const button = el('exportZip');
-  button.disabled = true;
+  if (exportController) {
+    exportController.abort();
+    setStatus('Stopping — saving what has been captured so far…');
+    return;
+  }
+
+  exportController = new AbortController();
+  button.textContent = 'Stop';
+  button.classList.remove('primary');
   ui.progress.hidden = false;
 
   try {
     const { blob, stats, filename, resourceCount } = await captureSite({
       tabId,
+      signal: exportController.signal,
       options: {
         prettyPrint: ui.optPretty.checked,
         sourceMaps: ui.optSourceMaps.checked,
-        includeAssets: ui.optAssets.checked
+        includeAssets: ui.optAssets.checked,
+        rewriteLinks: ui.optRewrite.checked
       },
       // Recorded bodies first: this is how XHR/API responses make it in.
       getBody: async (url) => {
@@ -305,14 +318,17 @@ el('exportZip').addEventListener('click', async () => {
 
     saveBlob(blob, filename);
     setStatus(
-      'Saved ' + filename + ' — ' + stats.files + ' files from ' + resourceCount + ' resources' +
+      (stats.stopped ? 'Stopped after ' + stats.stopped.after + ' of ' + stats.stopped.of + ' resources. Saved ' : 'Saved ') +
+        filename + ' — ' + stats.files + ' files from ' + resourceCount + ' resources' +
         (stats.sourceFiles ? ', ' + stats.sourceFiles + ' original sources recovered' : '') +
         (stats.failures.length ? ', ' + stats.failures.length + ' failed (see README.md)' : '') + '.'
     );
   } catch (err) {
     setStatus('Export failed: ' + err.message, true);
   } finally {
-    button.disabled = false;
+    exportController = null;
+    button.textContent = 'Export capture (.zip)';
+    button.classList.add('primary');
     ui.progressBar.style.width = '100%';
     setTimeout(() => {
       ui.progress.hidden = true;
@@ -416,7 +432,8 @@ el('captureSite').addEventListener('click', () => {
     getOptions: () => ({
       prettyPrint: ui.optPretty.checked,
       sourceMaps: ui.optSourceMaps.checked,
-      includeAssets: ui.optAssets.checked
+      includeAssets: ui.optAssets.checked,
+      rewriteLinks: ui.optRewrite.checked
     }),
     onProgress: ({ done, total }) => {
       ui.progress.hidden = false;

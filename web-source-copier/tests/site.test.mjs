@@ -9,7 +9,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { chromium } from 'playwright';
+import http from 'node:http';
 import { startFixture } from './fixtures/site.mjs';
+
+/** Serves an unpacked archive so it can be browsed with the live site blocked. */
+function serveDirectory(root, port) {
+  const types = {
+    '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
+    '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml'
+  };
+  const server = http.createServer((req, res) => {
+    const relative = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '');
+    const file = path.join(root, relative);
+    if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      res.writeHead(404);
+      return res.end('not found');
+    }
+    res.writeHead(200, { 'content-type': types[path.extname(file)] || 'application/octet-stream' });
+    res.end(fs.readFileSync(file));
+  });
+  server.listen(port);
+  return server;
+}
 
 const EXT = path.resolve(import.meta.dirname, '..');
 const CHROME = process.env.CHROME_PATH || undefined;
@@ -160,7 +181,43 @@ const inventory = JSON.parse(read('inventory.json') || '{}');
 check('inventory carries the page list', Array.isArray(inventory.pages) && inventory.pages.length === 4);
 check('every inventory path resolves', inventory.resources.every((entry) => fs.existsSync(path.join(root, entry.path))));
 
-await popup.setViewportSize({ width: 330, height: 520 });
+/* ----------------------------------------------- the archive browses offline */
+
+check('page HTML points at the archived stylesheet', /href="\.\.\/files\/127\.0\.0\.1\/site\.css"/.test(read('pages/about.html')), (read('pages/about.html').match(/<link[^>]*>/g) || []).join(' '));
+check('page HTML points at the archived image', /src="\.\.\/files\/127\.0\.0\.1\/logo\.png"/.test(read('pages/about.html')));
+check('a link to a captured page became a local file', /href="[^"]*about\.html"/.test(read('pages/index.html')), (read('pages/index.html').match(/href="[^"]*about[^"]*"/g) || []).join(' '));
+check('a link to an uncaptured page stays absolute', /href="\/team"|href="http:\/\/127\.0\.0\.1:8094\/team"/.test(read('pages/about.html')));
+check('the external link is untouched', read('pages/index.html').includes('https://example.com/external'));
+check('css url() was repointed inside the archive', /url\(logo\.png\)|url\("logo\.png"\)/.test(read('files/127.0.0.1/page.css')), read('files/127.0.0.1/page.css'));
+
+const archiveServer = serveDirectory(root, 8096);
+const offline = await ctx.newPage();
+// Nothing may reach the live fixture: if it does, this capture is not offline.
+let leaked = 0;
+await offline.route('**/*', (route) => {
+  const url = route.request().url();
+  if (url.includes('127.0.0.1:8094') || url.includes('127.0.0.1:8095')) {
+    leaked++;
+    return route.abort();
+  }
+  return route.continue();
+});
+await offline.goto('http://127.0.0.1:8096/pages/about.html', { waitUntil: 'load' });
+const borderStyle = await offline.locator('.about-only').evaluate((node) => getComputedStyle(node).borderTopStyle).catch(() => 'none');
+const headingColor = await offline.locator('.about-only').evaluate((node) => getComputedStyle(node).color).catch(() => '');
+const imageLoaded = await offline.locator('img').evaluate((node) => node.naturalWidth > 0).catch(() => false);
+check('archived page styles itself from the archive', headingColor === 'rgb(46, 139, 87)', 'color: ' + headingColor);
+check('archived page loads its image from the archive', imageLoaded);
+check('archived page never touched the live site', leaked === 0, leaked + ' request(s) escaped');
+
+await offline.goto('http://127.0.0.1:8096/pages/index.html', { waitUntil: 'load' });
+await offline.click('a[href$="about.html"]');
+await offline.waitForLoadState('load');
+check('links between archived pages navigate offline', (await offline.content()).includes('ABOUT-PAGE-MARKER'), offline.url());
+await offline.close();
+archiveServer.close();
+
+await popup.setViewportSize({ width: 330, height: 560 });
 await popup.screenshot({ path: path.join(import.meta.dirname, 'popup-site.png') });
 
 /* ------------------------------- served vs rendered on a JS-built page */
@@ -168,7 +225,7 @@ await popup.screenshot({ path: path.join(import.meta.dirname, 'popup-site.png') 
 const captureOnly = async (wanted, rendered) => {
   await popup.click('.picker-controls button:nth-of-type(2)'); // Select none
   await popup.locator('.picker-row', { hasText: wanted }).first().locator('input').check();
-  await popup.locator('#sitePicker .check input').setChecked(rendered);
+  await popup.locator('#sitePicker .picker-render input').setChecked(rendered);
   const pending = popup.waitForEvent('download', { timeout: 120000 });
   await popup.click('#sitePicker button.primary');
   const file = await pending;
