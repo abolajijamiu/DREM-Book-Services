@@ -22,3 +22,25 @@ export async function fetchWithTimeout(url, init, timeoutMs) {
     throw err;
   }
 }
+
+/**
+ * Runs `handler` over `items` with at most `concurrency` in flight.
+ *
+ * Downloads dominate a capture and they are almost all waiting on the network,
+ * so a handful at a time turns minutes into seconds. Order of completion is not
+ * guaranteed; callers that need stable output sort afterwards.
+ */
+export async function forEachPooled(items, concurrency, handler) {
+  const list = Array.from(items);
+  let next = 0;
+  const size = Math.max(1, Math.min(concurrency || 1, list.length));
+  await Promise.all(
+    Array.from({ length: size }, async () => {
+      while (true) {
+        const index = next++;
+        if (index >= list.length) return;
+        await handler(list[index], index);
+      }
+    })
+  );
+}

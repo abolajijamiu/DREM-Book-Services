@@ -125,7 +125,8 @@ binary assets.
 | The element picker runs *in* the page, where cross-origin CSS is unreadable | The extension fetches those sheets before the picker starts and passes the text in; the picker re-parses them as constructed stylesheets and matches against them like any other source |
 | The popup closes the instant you click the page | The service worker owns the picker injection, so it outlives the popup; the page copies from inside its own click handler, where the clipboard is allowed |
 | Minified bundles are unreadable | Tokenizer-based formatters that only ever *insert* whitespace — strings, comments, regex literals and template literals are passed through untouched |
-| ZIP without a library | `CompressionStream('deflate-raw')` plus a hand-written central directory |
+| ZIP without a library | `CompressionStream('deflate-raw')` plus a hand-written central directory. Already-compressed formats (PNG, WOFF2, MP4 …) are stored rather than deflated — same size, a quarter of the CPU |
+| Capture speed | Downloads run 8 at a time (`concurrency`), identical URLs are de-duplicated in flight, and a host that times out three times is dropped rather than waited on again |
 | Original sources | `sourceMappingURL` (including inline `data:` maps and index maps with `sections`) → `sourcesContent` → a real folder tree |
 | Which pages may be captured | `robots.txt` parsed per RFC 9309 — user-agent groups, `Allow`/`Disallow`, `*` and `$` patterns, longest-match-wins — consulted before any page is fetched |
 | Pages a fetch cannot render | Optionally loaded in a background tab, read the same way the live page is, then closed |
@@ -252,6 +253,27 @@ multi-page capture, robots.txt and all.
 Live runs need the open internet; behind a TLS-intercepting proxy, pass that
 proxy's CA SPKI hashes via `SPKI_PINS` (see the comment at the top of the
 file).
+
+## Speed
+
+Captures are dominated by two things, and both are handled:
+
+| Stage | Was | Now |
+| --- | --- | --- |
+| Downloading 132 resources (pypi.org) | 2,990 ms, one at a time | **203 ms**, 8 at a time |
+| Pretty-printing 27 files | 8,861 ms | **~450 ms** |
+| Zipping 2 MB | 189 ms | **48 ms** (media stored, not deflated) |
+| **Whole capture — pypi.org** | **10.1 s** | **1.1 s** |
+| **Whole capture — a Next.js docs app, 94 resources** | **176.5 s** | **8.9 s** |
+
+The pretty-printers used to trim trailing whitespace off the *entire* output
+string on every newline, which made them quadratic; they now write into a line
+buffer. A 110 KB minified bundle went from 8.9 s to 100 ms, byte-for-byte the
+same output.
+
+Files larger than `maxFormatBytes` (2 MB) are stored as served rather than
+formatted, so one enormous bundle cannot hold up a capture. The archive's
+README says when that happened.
 
 ## Known limits
 

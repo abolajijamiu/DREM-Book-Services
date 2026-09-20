@@ -116,19 +116,25 @@ function opensObjectLiteral(tail) {
 export function formatJs(source) {
   const tokens = tokenizeJs(source);
   const stack = []; // open delimiters, innermost last
-  let out = '';
+  const lines = [];
+  let line = '';
   let depth = 0;
-  let atLineStart = true;
+  // The last few characters written, for the object-literal test. Keeping a
+  // window rather than scanning the output is what keeps this linear.
+  let recent = '';
 
+  const remember = (text) => {
+    recent = (recent + text).slice(-40);
+  };
+  const atLineStart = () => !line.trim();
   const newline = () => {
-    out = out.replace(/[ \t]+$/, '');
-    out += '\n' + indentOf(depth);
-    atLineStart = true;
+    lines.push(line.replace(/[ \t]+$/, ''));
+    line = indentOf(depth);
   };
   const write = (text) => {
     if (!text) return;
-    out += text;
-    atLineStart = false;
+    line += text;
+    remember(text);
   };
 
   for (const token of tokens) {
@@ -141,12 +147,12 @@ export function formatJs(source) {
     for (const ch of token.value) {
       if (/\s/.test(ch)) {
         // Collapse original whitespace; layout is decided below.
-        if (!atLineStart && !/[\s]$/.test(out)) write(' ');
+        if (!atLineStart() && !/\s$/.test(line)) write(' ');
         continue;
       }
 
       if (ch === '{' || ch === '[' || ch === '(') {
-        stack.push(ch === '{' && !opensObjectLiteral(out) ? 'block' : ch);
+        stack.push(ch === '{' && !opensObjectLiteral(recent) ? 'block' : ch);
         write(ch);
         if (ch === '{' || ch === '[') {
           depth++;
@@ -159,22 +165,22 @@ export function formatJs(source) {
         const open = stack.pop();
         if (open === '{' || open === '[' || open === 'block') {
           depth--;
-          if (!atLineStart) newline();
-          else out = out.replace(/[ \t]*$/, indentOf(depth));
+          if (!atLineStart()) newline();
+          else line = indentOf(depth);
         }
         write(ch);
         continue;
       }
 
-      const inParens = stack[stack.length - 1] === '(';
+      const top = stack[stack.length - 1];
 
-      if (ch === ';' && !inParens) {
+      if (ch === ';' && top !== '(') {
         write(ch);
         newline();
         continue;
       }
 
-      if (ch === ',' && (stack[stack.length - 1] === '{' || stack[stack.length - 1] === '[')) {
+      if (ch === ',' && (top === '{' || top === '[')) {
         write(ch);
         newline();
         continue;
@@ -184,7 +190,8 @@ export function formatJs(source) {
     }
   }
 
-  return tidyJs(out).trim() + '\n';
+  lines.push(line);
+  return tidyJs(lines.join('\n')).trim() + '\n';
 }
 
 /**
@@ -192,7 +199,7 @@ export function formatJs(source) {
  * comment or regex is ever rewritten.
  */
 function tidyJs(text) {
-  return tokenizeJs(text)
+  const joined = tokenizeJs(text)
     .map((token) => {
       if (token.type !== 'code') return token.value;
       return token.value
@@ -202,22 +209,31 @@ function tidyJs(text) {
         .replace(/\belse\{/g, 'else {')
         .replace(/\}(else|catch|finally)\b/g, '} $1');
     })
-    .join('')
-    .split('\n')
-    .map((line) => line.replace(/\s+$/, ''))
-    .filter((line, index, all) => line.trim() || (index > 0 && all[index - 1].trim()))
-    .join('\n');
+    .join('');
+  return collapseBlankLines(joined.split('\n')).join('\n');
+}
+
+/** Trailing whitespace off, and never two blank lines in a row. */
+function collapseBlankLines(lines) {
+  const out = [];
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line && (!out.length || !out[out.length - 1])) continue;
+    out.push(line);
+  }
+  return out;
 }
 
 export function formatCss(source) {
-  let out = '';
+  const lines = [];
+  let line = '';
   let depth = 0;
   let parenDepth = 0;
   let i = 0;
 
   const newline = () => {
-    out = out.replace(/[ \t]+$/, '');
-    out += '\n' + indentOf(depth);
+    lines.push(line.replace(/[ \t]+$/, ''));
+    line = indentOf(depth);
   };
 
   while (i < source.length) {
@@ -226,7 +242,7 @@ export function formatCss(source) {
     if (ch === '/' && source[i + 1] === '*') {
       const end = source.indexOf('*/', i + 2);
       const stop = end === -1 ? source.length : end + 2;
-      out += source.slice(i, stop);
+      line += source.slice(i, stop);
       newline();
       i = stop;
       continue;
@@ -235,13 +251,13 @@ export function formatCss(source) {
     if (ch === '"' || ch === "'") {
       let j = i + 1;
       while (j < source.length && source[j] !== ch) j += source[j] === '\\' ? 2 : 1;
-      out += source.slice(i, j + 1);
+      line += source.slice(i, j + 1);
       i = j + 1;
       continue;
     }
 
     if (ch === '{') {
-      out = out.replace(/\s+$/, '') + ' {';
+      line = line.replace(/\s+$/, '') + ' {';
       depth++;
       newline();
       i++;
@@ -250,28 +266,28 @@ export function formatCss(source) {
 
     if (ch === '}') {
       depth--;
-      out = out.replace(/\s+$/, '');
-      out += '\n' + indentOf(depth) + '}';
-      newline();
+      if (line.trim()) newline();
+      lines.push(indentOf(depth) + '}');
+      line = indentOf(depth);
       i++;
       continue;
     }
 
     if (ch === ';') {
-      out += ';';
+      line += ';';
       newline();
       i++;
       continue;
     }
 
     if (/\s/.test(ch)) {
-      if (!/[\s(]$/.test(out) && out) out += ' ';
+      if (line && !/[\s(]$/.test(line)) line += ' ';
       i++;
       continue;
     }
 
     if (ch === ',' && parenDepth === 0) {
-      out += ', ';
+      line += ', ';
       i++;
       while (/\s/.test(source[i])) i++;
       continue;
@@ -281,22 +297,18 @@ export function formatCss(source) {
     if (ch === ')') parenDepth = Math.max(0, parenDepth - 1);
 
     if (ch === ':' && (depth > 0 || parenDepth > 0)) {
-      out += ': ';
+      line += ': ';
       i++;
       while (/\s/.test(source[i])) i++;
       continue;
     }
 
-    out += ch;
+    line += ch;
     i++;
   }
 
-  return out
-    .split('\n')
-    .map((line) => line.replace(/\s+$/, ''))
-    .filter((line, index, all) => line.trim() || (index > 0 && all[index - 1].trim()))
-    .join('\n')
-    .trim() + '\n';
+  lines.push(line);
+  return collapseBlankLines(lines).join('\n').trim() + '\n';
 }
 
 const VOID_ELEMENTS = new Set([

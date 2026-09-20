@@ -41,6 +41,20 @@ function dosDateTime(date) {
   };
 }
 
+const ALREADY_COMPRESSED = /\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|mp4|webm|mov|mp3|m4a|ogg|zip|gz|br|pdf|wasm)$/i;
+
+/**
+ * True for formats that carry their own compression. Deflating them costs CPU
+ * and saves nothing, so they are stored as-is.
+ */
+export function isAlreadyCompressed(url, contentType) {
+  const type = (contentType || '').toLowerCase();
+  if (type.startsWith('image/') || type.startsWith('video/') || type.startsWith('audio/') || type.includes('font')) {
+    return !type.includes('svg'); // SVG is text and deflates well
+  }
+  return ALREADY_COMPRESSED.test(String(url).split('?')[0]);
+}
+
 /** Keeps a ZIP path legal on Windows and free of traversal tricks. */
 export function sanitizeZipPath(rawPath) {
   const parts = String(rawPath)

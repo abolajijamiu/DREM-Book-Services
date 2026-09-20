@@ -13,6 +13,7 @@ import { loadRobots, USER_AGENT } from './robots.js';
 import { pageInventoryRunner } from './page-inventory.js';
 import { cssCopierRunner } from './css-collector.js';
 import { formatByKind } from './format.js';
+import { forEachPooled } from './net.js';
 
 export const SITE_DEFAULTS = {
   maxPages: 25,
@@ -254,11 +255,13 @@ export async function captureSelectedPages(config) {
 
     let stored = 0;
     const skipKinds = options.includeAssets ? new Set() : new Set(['image', 'font', 'media']);
-    for (const resource of descriptor.resources || []) {
-      if (skipKinds.has(resource.kind || kindOf(resource.url, ''))) continue;
-      const path = await addResource(ctx, resource);
-      if (path) stored++;
-    }
+    const wanted = (descriptor.resources || []).filter(
+      (resource) => !skipKinds.has(resource.kind || kindOf(resource.url, ''))
+    );
+    await forEachPooled(wanted, options.concurrency, async (resource) => {
+      const stored_path = await addResource(ctx, resource);
+      if (stored_path) stored++;
+    });
 
     ctx.pages.push({
       url,

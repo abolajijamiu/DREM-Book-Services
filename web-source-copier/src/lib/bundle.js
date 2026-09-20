@@ -6,11 +6,11 @@
  * message round-trip is needed to read a site's assets.
  */
 
-import { ZipWriter } from './zip.js';
+import { ZipWriter, isAlreadyCompressed } from './zip.js';
 import { formatByKind } from './format.js';
 import { extractOriginalSources } from './sourcemap.js';
 import { pageInventoryRunner } from './page-inventory.js';
-import { fetchWithTimeout } from './net.js';
+import { fetchWithTimeout, forEachPooled } from './net.js';
 import { cssUrlReferences } from './html-scan.js';
 import { cssCopierRunner } from './css-collector.js';
 
@@ -23,6 +23,13 @@ export const DEFAULT_OPTIONS = {
   usedCssOnly: false,
   includeInlineAttributes: false,
   maxFileBytes: 12 * 1024 * 1024,
+  // Downloads are almost all waiting on the network, so run a few at once.
+  concurrency: 8,
+  // Pretty-printing costs roughly a millisecond per KB. Past this size a file
+  // is stored as served rather than holding up the whole capture.
+  maxFormatBytes: 2 * 1024 * 1024,
+  // A host that times out repeatedly is not worth waiting for again.
+  hostTimeoutsBeforeSkip: 3,
   // One unreachable host must not hold up the whole capture.
   fetchTimeoutMs: 20000,
   // Site capture follows url() references out of fetched stylesheets, since
@@ -168,6 +175,8 @@ export function createCapture(config) {
     zip: new ZipWriter(),
     stats: { files: 0, bytes: 0, byKind: {}, failures: [], sourceFiles: 0, maps: 0 },
     storedResources: new Map(), // url -> archive path (deduplicates across pages)
+    inflight: new Map(), // url -> promise, so parallel workers never double-fetch
+    hostTimeouts: new Map(), // host -> consecutive timeouts
     sourceSeen: new Set(),
     manifestRows: [],
     pages: []
@@ -178,14 +187,40 @@ export function createCapture(config) {
  * Fetches one resource into the archive, unpacking its source map if it has
  * one. Returns the path it was stored at, or null when it could not be had.
  */
-export async function addResource(ctx, resource) {
+export function addResource(ctx, resource) {
+  if (ctx.storedResources.has(resource.url)) return Promise.resolve(ctx.storedResources.get(resource.url));
+  const pending = ctx.inflight.get(resource.url);
+  if (pending) return pending;
+  const promise = fetchIntoArchive(ctx, resource).finally(() => ctx.inflight.delete(resource.url));
+  ctx.inflight.set(resource.url, promise);
+  return promise;
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch (err) {
+    return '';
+  }
+}
+
+async function fetchIntoArchive(ctx, resource) {
   const { options, stats } = ctx;
-  if (ctx.storedResources.has(resource.url)) return ctx.storedResources.get(resource.url);
+  const host = hostOf(resource.url);
+  const strikes = ctx.hostTimeouts.get(host) || 0;
+
+  if (strikes >= (options.hostTimeoutsBeforeSkip || Infinity)) {
+    stats.failures.push({ url: resource.url, error: 'skipped — ' + host + ' stopped responding' });
+    ctx.storedResources.set(resource.url, null);
+    return null;
+  }
 
   let body;
   try {
     body = await ctx.fetchBody(resource.url);
+    if (strikes) ctx.hostTimeouts.set(host, 0);
   } catch (err) {
+    if (/timed out/.test(err.message)) ctx.hostTimeouts.set(host, strikes + 1);
     stats.failures.push({ url: resource.url, error: err.message });
     ctx.storedResources.set(resource.url, null);
     return null;
@@ -207,11 +242,15 @@ export async function addResource(ctx, resource) {
 
   if (isText) {
     text = decodeText(body.bytes);
-    const formatKind = options.prettyPrint ? formatKindFor(kind, resource.url) : null;
+    const tooBigToFormat = text.length > (options.maxFormatBytes || Infinity);
+    const formatKind = options.prettyPrint && !tooBigToFormat ? formatKindFor(kind, resource.url) : null;
+    if (tooBigToFormat) stats.unformatted = (stats.unformatted || 0) + 1;
     stored = formatKind ? formatByKind(formatKind, text) : text;
   }
 
-  const writtenAs = await ctx.zip.add(ctx.root + '/' + zipPathForUrl(resource.url), stored);
+  const writtenAs = await ctx.zip.add(ctx.root + '/' + zipPathForUrl(resource.url), stored, {
+    store: !isText && isAlreadyCompressed(resource.url, body.contentType)
+  });
   const archivePath = writtenAs.slice(ctx.root.length + 1);
   ctx.storedResources.set(resource.url, archivePath);
   stats.files++;
@@ -247,12 +286,14 @@ export async function addResource(ctx, resource) {
 
   // A stylesheet points at fonts and images of its own.
   if (text && kind === 'style' && options.followCssUrls) {
-    for (const url of cssUrlReferences(text, resource.url)) {
-      if (ctx.storedResources.has(url)) continue;
-      const nested = kindOf(url, '');
-      if (!options.includeAssets && ['image', 'font', 'media'].includes(nested)) continue;
-      await addResource(ctx, { url, kind: nested, origins: ['css url() in ' + archivePath] });
-    }
+    const nested = cssUrlReferences(text, resource.url).filter((url) => {
+      if (ctx.storedResources.has(url)) return false;
+      const nestedKind = kindOf(url, '');
+      return options.includeAssets || !['image', 'font', 'media'].includes(nestedKind);
+    });
+    await forEachPooled(nested, options.concurrency, (url) =>
+      addResource(ctx, { url, kind: kindOf(url, ''), origins: ['css url() in ' + archivePath] })
+    );
   }
 
   return archivePath;
@@ -269,20 +310,7 @@ export async function addResource(ctx, resource) {
  *                                       XHR/API responses a refetch would miss)
  */
 export async function captureSite(config) {
-  const options = Object.assign({}, DEFAULT_OPTIONS, config.options || {});
   const onProgress = config.onProgress || (() => {});
-  const fetchBody = async (url) => {
-    if (config.getBody) {
-      const recorded = await config.getBody(url);
-      if (recorded && recorded.bytes) return recorded;
-    }
-    return defaultFetch(url, options.fetchTimeoutMs);
-  };
-  const fetchText = async (url) => {
-    const result = await fetchBody(url);
-    return result ? decodeText(result.bytes) : null;
-  };
-
   onProgress({ message: 'Taking inventory of the page…', done: 0, total: 1 });
 
   const frames = (
@@ -297,6 +325,11 @@ export async function captureSite(config) {
   if (!frames.length) throw new Error('This page cannot be read (browser pages and the extension store are off limits).');
 
   const top = frames.find((frame) => frame.isTopFrame) || frames[0];
+
+  // One context, shared by every step below — the same one site capture uses.
+  const ctx = createCapture({ primaryUrl: top.url, options: config.options, onProgress, getBody: config.getBody });
+  const { options, stats } = ctx;
+
   const resources = new Map();
   frames.forEach((frame) => {
     frame.resources.forEach((resource) => {
@@ -314,29 +347,16 @@ export async function captureSite(config) {
   const skippedKinds = options.includeAssets ? new Set() : new Set(['image', 'font', 'media']);
   const queue = Array.from(resources.values()).filter((resource) => !skippedKinds.has(resource.kind));
 
-  const zip = new ZipWriter();
-  const root = (() => {
-    try {
-      return new URL(top.url).hostname.replace(/^www\./, '');
-    } catch (err) {
-      return 'capture';
-    }
-  })() + '-' + new Date().toISOString().slice(0, 10);
-
-  const stats = { files: 0, bytes: 0, byKind: {}, failures: [], sourceFiles: 0, maps: 0 };
-  const sourceSeen = new Set();
-  const manifestRows = [];
-
   // 1. The page itself, as rendered and as served.
   const renderedHtml = options.prettyPrint ? formatByKind('html', top.renderedHtml) : top.renderedHtml;
-  await zip.add(root + '/rendered-page.html', renderedHtml);
+  await ctx.zip.add(ctx.root + '/rendered-page.html', renderedHtml);
   stats.files++;
 
   try {
-    const original = await fetchBody(top.url);
+    const original = await ctx.fetchBody(top.url);
     const originalText = decodeText(original.bytes);
-    await zip.add(
-      root + '/original-page.html',
+    await ctx.zip.add(
+      ctx.root + '/original-page.html',
       options.prettyPrint ? formatByKind('html', originalText) : originalText
     );
     stats.files++;
@@ -351,9 +371,9 @@ export async function captureSite(config) {
       inlineIndex++;
       const isJson = script.type.includes('json');
       const name =
-        root + '/inline-scripts/inline-' + inlineIndex + (script.id ? '-' + script.id : '') + (isJson ? '.json' : '.js');
+        ctx.root + '/inline-scripts/inline-' + inlineIndex + (script.id ? '-' + script.id : '') + (isJson ? '.json' : '.js');
       const body = options.prettyPrint ? formatByKind(isJson ? 'json' : 'js', script.text) : script.text;
-      zip.add(name, body);
+      ctx.zip.add(name, body);
       stats.files++;
     });
   });
@@ -388,98 +408,35 @@ export async function captureSite(config) {
       )
       .join('\n\n\n');
     if (css.trim()) {
-      await zip.add(root + '/collected.css', css + '\n');
+      await ctx.zip.add(ctx.root + '/collected.css', css + '\n');
       stats.files++;
     }
   } catch (err) {
     stats.failures.push({ url: top.url, error: 'CSS collection: ' + err.message });
   }
 
-  // 4. Every resource the page uses.
+  // 4. Every resource the page uses, a few at a time.
   let done = 0;
-  for (const resource of queue) {
+  await forEachPooled(queue, options.concurrency, async (resource) => {
     done++;
     onProgress({
       message: 'Downloading ' + resource.url.split('/').pop().slice(0, 40),
       done,
       total: queue.length
     });
+    await addResource(ctx, resource);
+  });
 
-    let body;
-    try {
-      body = await fetchBody(resource.url);
-    } catch (err) {
-      stats.failures.push({ url: resource.url, error: err.message });
-      continue;
-    }
+  // Stable order in the report, whatever order the downloads finished in.
+  ctx.manifestRows.sort((a, b) => a.path.localeCompare(b.path));
 
-    if (body.bytes.length > options.maxFileBytes) {
-      stats.failures.push({
-        url: resource.url,
-        error: 'skipped, ' + formatBytes(body.bytes.length) + ' exceeds the size limit'
-      });
-      continue;
-    }
-
-    const kind = kindOf(resource.url, body.contentType);
-    const path = zipPathForUrl(resource.url);
-    const isText = TEXT_KINDS.has(kind) && !looksBinary(body.bytes);
-    let stored = body.bytes;
-    let text = null;
-
-    if (isText) {
-      text = decodeText(body.bytes);
-      const formatKind = options.prettyPrint ? formatKindFor(kind, resource.url) : null;
-      stored = formatKind ? formatByKind(formatKind, text) : text;
-    }
-
-    const writtenAs = await zip.add(root + '/' + path, stored);
-    stats.files++;
-    stats.bytes += body.bytes.length;
-    stats.byKind[kind] = (stats.byKind[kind] || 0) + 1;
-    manifestRows.push({
-      url: resource.url,
-      kind,
-      size: body.bytes.length,
-      // Relative to the archive root, so it matches what you see once unzipped.
-      path: writtenAs.slice(root.length + 1),
-      origins: resource.origins
-    });
-
-    // 5. Original sources hiding behind the bundle.
-    if (options.sourceMaps && text && (kind === 'script' || kind === 'style')) {
-      try {
-        const extracted = await extractOriginalSources(fetchText, resource.url, text);
-        if (extracted) {
-          stats.maps++;
-          if (extracted.error) {
-            stats.failures.push({ url: extracted.mapUrl, error: extracted.error });
-          }
-          for (const file of extracted.files) {
-            const key = file.path + '|' + file.content.length;
-            if (sourceSeen.has(key)) continue;
-            sourceSeen.add(key);
-            await zip.add(root + '/src/' + file.path, file.content);
-            stats.sourceFiles++;
-            stats.files++;
-          }
-        }
-      } catch (err) {
-        stats.failures.push({ url: resource.url, error: 'source map: ' + err.message });
-      }
-    }
-  }
-
-  // 6. A report that says what was captured and what cannot be captured at all.
+  // 5. A report that says what was captured and what cannot be captured at all.
   onProgress({ message: 'Writing the archive…', done: queue.length, total: queue.length });
-  await zip.add(root + '/README.md', buildReport({ top, stats, manifestRows, options, frames }));
-  await zip.add(
-    root + '/inventory.json',
-    JSON.stringify({ url: top.url, capturedAt: new Date().toISOString(), resources: manifestRows }, null, 2)
-  );
-
-  const blob = await zip.finish();
-  return { blob, stats, filename: root + '.zip', resourceCount: queue.length };
+  const result = await finishCapture(ctx, {
+    primaryUrl: top.url,
+    report: buildReport({ top, stats, manifestRows: ctx.manifestRows, options, frames })
+  });
+  return Object.assign(result, { resourceCount: queue.length });
 }
 
 /** Writes the report, the inventory and the page index, then seals the archive. */
@@ -569,7 +526,7 @@ function buildSiteReport(ctx, meta) {
 - **Files in this archive:** ${stats.files}
 - **Downloaded:** ${formatBytes(stats.bytes)}
 - **Source maps found:** ${stats.maps} (${stats.sourceFiles} original source files recovered)
-- **Options:** pretty-print ${options.prettyPrint ? 'on' : 'off'}, source maps ${options.sourceMaps ? 'on' : 'off'}, binary assets ${options.includeAssets ? 'included' : 'skipped'}, pages ${meta.renderPages ? 'rendered in a background tab' : 'captured as served'}
+- **Options:** pretty-print ${options.prettyPrint ? 'on' : 'off'}, source maps ${options.sourceMaps ? 'on' : 'off'}, binary assets ${options.includeAssets ? 'included' : 'skipped'}, pages ${meta.renderPages ? 'rendered in a background tab' : 'captured as served'}, ${options.concurrency} downloads at a time${stats.unformatted ? ', ' + stats.unformatted + ' file(s) left unformatted for being over ' + formatBytes(options.maxFormatBytes) : ''}
 
 ## robots.txt
 
