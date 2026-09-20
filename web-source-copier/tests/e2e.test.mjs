@@ -122,6 +122,11 @@ check('zip pretty-prints the bundle', read('files/127.0.0.1/app.js').split('\n')
 check('report names what a browser cannot capture', read('README.md').includes('PHP'));
 const inventory = JSON.parse(read('inventory.json') || '{}');
 check('inventory lists resources with paths', Array.isArray(inventory.resources) && inventory.resources.some((r) => r.url.endsWith('/app.js')));
+check(
+  'every inventory path resolves inside the archive',
+  inventory.resources.length > 0 && inventory.resources.every((entry) => fs.existsSync(path.join(root, entry.path))),
+  inventory.resources.map((entry) => entry.path).join(', ')
+);
 
 await popup.setViewportSize({ width: 330, height: 430 });
 await popup.screenshot({ path: path.join(import.meta.dirname, 'popup-export.png') });
@@ -212,6 +217,11 @@ check('picker returns only matching CSS', picked.includes('.external-used') && !
 check('picker includes cross-origin rules', picked.includes('.remote-used'), picked.slice(0, 600));
 check('picker drops unmatched cross-origin rules', !picked.includes('.remote-unused'));
 check('picker credits the cross-origin stylesheet', picked.includes('/* from http://127.0.0.1:8095/remote.css */'));
+check('picker rebuilds @media wrappers', /@media \(min-width: ?1px\) \{/.test(picked) && picked.includes('.hero-media'));
+check('picker nests @supports > @media', /@supports[^\n]*\{\n\s+@media[^\n]*\{/.test(picked), picked.slice(picked.indexOf('@supports'), picked.indexOf('@supports') + 160));
+check('picker does not double the opening brace', !/\{\s*\{/.test(picked));
+check('picker keeps at-rule groups balanced', (picked.match(/\{/g) || []).length === (picked.match(/\}/g) || []).length);
+check('picker prunes unmatched rules inside @media', !picked.includes('.never-there'));
 check('picker reports computed styles', picked.includes('computed styles'));
 check('picker cleans up its overlay', !(await target.isVisible('#__web_source_copier_picker__')));
 

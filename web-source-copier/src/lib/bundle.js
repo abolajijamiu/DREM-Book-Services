@@ -296,7 +296,14 @@ export async function captureSite(config) {
     stats.files++;
     stats.bytes += body.bytes.length;
     stats.byKind[kind] = (stats.byKind[kind] || 0) + 1;
-    manifestRows.push({ url: resource.url, kind, size: body.bytes.length, path: writtenAs, origins: resource.origins });
+    manifestRows.push({
+      url: resource.url,
+      kind,
+      size: body.bytes.length,
+      // Relative to the archive root, so it matches what you see once unzipped.
+      path: writtenAs.slice(root.length + 1),
+      origins: resource.origins
+    });
 
     // 5. Original sources hiding behind the bundle.
     if (options.sourceMaps && text && (kind === 'script' || kind === 'style')) {

@@ -27,7 +27,7 @@ const PAGE = (otherPort) => `<!doctype html>
 <link rel="stylesheet" href="http://127.0.0.1:${otherPort}/remote.css">
 <style>.inline-used{color:rebeccapurple}.inline-unused{color:red}#hero{padding:24px}</style>
 </head><body>
-<div class="hero external-used remote-used" id="hero"><p class="lead">Fixture</p></div>
+<div class="hero external-used remote-used hero-media hero-nested" id="hero"><p class="lead">Fixture</p></div>
 <img src="/logo.png" width="16" height="16" alt="">
 <div style="color: teal">inline attribute</div>
 <iframe src="/frame.html"></iframe>
@@ -40,7 +40,12 @@ export function startFixture(mainPort = 8094, otherPort = 8095) {
   const files = {
     '/': ['text/html', PAGE(otherPort)],
     '/frame.html': ['text/html', '<style>.iframe-rule{color:navy}</style><p class="iframe-rule">f</p>'],
-    '/site.css': ['text/css', '.external-used{border:1px solid black}\n.external-unused{border:9px dotted red}'],
+    '/site.css': ['text/css', [
+      '.external-used{border:1px solid black}',
+      '.external-unused{border:9px dotted red}',
+      '@media (min-width:1px){.hero-media{outline:1px solid red}.never-there{outline:9px solid red}}',
+      '@supports (display:grid){@media (min-width:1px){.hero-nested{color:navy}}}'
+    ].join('\n')],
     '/app.js': ['application/javascript', 'var app=1;function go(a,b){if(a>b){return a/b}return[1,2].map(function(x){return x*2})}\n//# sourceMappingURL=app.js.map'],
     '/app.js.map': ['application/json', SOURCE_MAP],
     '/api/items.json': ['application/json', '{"items":[{"id":1,"name":"from the API"}]}'],

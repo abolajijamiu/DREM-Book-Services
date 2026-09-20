@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node tests/unit.test.mjs && node tests/e2e.test.mjs",
     "test:unit": "node tests/unit.test.mjs",
-    "test:e2e": "node tests/e2e.test.mjs"
+    "test:e2e": "node tests/e2e.test.mjs",
+    "test:real": "node tests/real-site.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.0"

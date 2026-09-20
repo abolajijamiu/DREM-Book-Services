@@ -116,7 +116,8 @@ export function elementInspectorRunner(request) {
         if (rule instanceof CSSStyleRule) {
           if (matchesAny(rule.selectorText)) hits.push({ wrapper, source, text: rule.cssText });
         } else if (typeof CSSGroupingRule !== 'undefined' && rule instanceof CSSGroupingRule) {
-          const prelude = rule.cssText.slice(0, rule.cssText.indexOf('{') + 1).trim();
+          // Without its brace: the wrapper is rebuilt with one below.
+          const prelude = rule.cssText.slice(0, rule.cssText.indexOf('{')).trim();
           walk(rule.cssRules, wrapper ? wrapper + '\n' + prelude : prelude, source);
         } else if (rule instanceof CSSFontFaceRule || (typeof CSSKeyframesRule !== 'undefined' && rule instanceof CSSKeyframesRule)) {
           hits.push({ wrapper: '', source, text: rule.cssText, atRule: true });
@@ -154,7 +155,8 @@ export function elementInspectorRunner(request) {
       }
       const opens = wrapper.split('\n');
       const indented = body.split('\n').map((line) => (line ? '  '.repeat(opens.length) + line : line)).join('\n');
-      chunks.push(banner + opens.join(' {\n') + '\n' + indented + '\n' + opens.map(() => '}').join('\n'));
+      const closers = opens.map((_, level) => '  '.repeat(opens.length - level - 1) + '}').join('\n');
+      chunks.push(banner + opens.map((open, level) => '  '.repeat(level) + open + ' {').join('\n') + '\n' + indented + '\n' + closers);
     });
 
     const fontFaces = hits.filter((hit) => hit.atRule).map((hit) => hit.text);

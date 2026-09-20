@@ -155,6 +155,7 @@ npm install
 npm test                 # unit + e2e
 npm run test:unit        # no browser needed
 npm run test:e2e         # CHROME_PATH=/path/to/chrome to pick a binary
+npm run test:real -- https://pypi.org/   # drive it against a live site
 ```
 
 The e2e test loads the unpacked extension into Chromium against a two-origin
@@ -168,6 +169,29 @@ Only two seams are stubbed, because Playwright cannot reach them: the popup's
 `chrome.tabs.query` (it would otherwise target the test tab itself) and the
 panel's `chrome.devtools` host object. Everything below those is shipped code.
 
+### Against live sites
+
+`tests/real-site.mjs` runs the same flow against a real URL and prints what it
+got. Two runs, both clean:
+
+**pypi.org** — 3,376 CSS rules collected (295 after "used only"); a 1.88 MB
+archive of 334 files in 10s; **213 original sources recovered** from
+Warehouse's source maps, including its whole SCSS tree and Stimulus
+controllers. Spot-checked against `pypi/warehouse@main`: recovered files are
+byte-identical to the project's own repository. The captured
+`fa-solid-900.woff2` matches the server byte for byte, and the pretty-printed
+`warehouse.js` (109.8 KB minified → 164.7 KB across 5,046 lines) keeps every
+non-space character.
+
+**jsr.io** — a Deno Fresh/Preact/Tailwind app: 2,207 rules (694 used), 40
+files, no source maps published, so `src/` is correctly empty. The picker
+returned 393 lines of matching CSS with Tailwind's
+`@layer properties { @supports … }` nesting rebuilt correctly.
+
+Live runs need the open internet; behind a TLS-intercepting proxy, pass that
+proxy's CA SPKI hashes via `SPKI_PINS` (see the comment at the top of the
+file).
+
 ## Known limits
 
 - Browser-internal pages (`chrome://`, the extension store, the PDF viewer)
@@ -175,6 +199,11 @@ panel's `chrome.devtools` host object. Everything below those is shipped code.
 - Closed shadow roots are invisible to any extension by design.
 - `@import` inside a *fetched* cross-origin stylesheet is not followed.
 - Files over 12 MB are skipped by the exporter (configurable in `bundle.js`).
+- Chromium logs a one-off CSP notice ("Refused to load the script …") the first
+  time an extension page fetches a URL the inspected page had preloaded as a
+  module. It is cosmetic: the fetch then proceeds normally and the bytes are
+  captured intact — the live-site test verifies this by comparing against the
+  server.
 - Keep the popup open while an export runs; long captures belong in the panel.
 
 ## Using this responsibly
