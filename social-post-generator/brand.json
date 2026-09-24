@@ -1,23 +1,24 @@
 {
-  "name": "DREM Book Services",
-  "shortName": "DREM",
-  "tagline": "From manuscript to finished book",
+  "name": "DREM Book",
+  "word1": "DREM",
+  "word2": "Book",
+  "tagline": "Every book starts as a dream.",
   "website": "",
   "handle": "",
   "email": "",
-  "cta": "Send us a message to get started",
+  "cta": "Start your book",
   "logo": "",
   "colors": {
-    "ink": "#1D2B3A",
-    "paper": "#F7F1E6",
-    "accent": "#C0663F",
-    "gold": "#C9A45C",
-    "muted": "#6B7280",
-    "accentDeep": "#9E4B2B"
+    "midnight": "#1E2147",
+    "ember": "#C4470E",
+    "emberDeep": "#A83A09",
+    "moonlight": "#F4E7A1",
+    "paper": "#F7F2E8",
+    "amber": "#F0A030",
+    "dusk": "#5548A6",
+    "graphite": "#4A4D63",
+    "line": "#E3DDCF",
+    "white": "#FFFFFF"
   },
-  "defaultHashtags": [
-    "#DREMBookServices",
-    "#AmWriting",
-    "#SelfPublishing"
-  ]
+  "defaultHashtags": ["#DREMBook", "#SelfPublishing", "#IndieAuthor"]
 }

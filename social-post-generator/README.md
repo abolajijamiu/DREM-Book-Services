@@ -1,4 +1,9 @@
-# DREM Book Services: Social Post Generator
+# DREM Book: Social Post Generator
+
+Every image uses the DREM Book brand kit (`brand/drem-book-brand-kit.html`):
+the fanned-page mark and wordmark, the Midnight / Ember / Moonlight / Paper
+palette, Open Sans with Zilla Slab italic accents, the duotone icons, the ember
+pill button with its moonlight ring, and copy in the kit's voice.
 
 Write your posts once in `content/posts.json`. One command turns them into
 ready-to-upload images and captions for every platform and size:
@@ -44,7 +49,7 @@ or import it into a scheduler such as Buffer, Later or Meta Business Suite.
 Rebuild only part of it:
 
 ```bash
-npm run build -- --post 01-editing,08-now-booking
+npm run build -- --post 01-editing,08-every-book-a-dream
 npm run build -- --platform instagram,linkedin
 ```
 
@@ -52,26 +57,30 @@ npm run build -- --platform instagram,linkedin
 
 | Field | What it does |
 |---|---|
-| `name`, `tagline` | Shown in the footer of every image |
-| `website`, `handle`, `email` | **Empty for now; fill these in.** The first one set replaces the tagline in the footer, and all of them go at the end of captions. |
-| `cta` | Button text on service and announcement posts |
-| `logo` | Path to a logo file (PNG/SVG/JPG). Leave it empty to use the built-in open-book mark. |
-| `colors` | `ink` (dark), `paper` (light), `accent` + `accentDeep` (terracotta), `gold` |
+| `word1`, `word2` | The wordmark: **DREM** (heavy) and Book (light), beside the mark |
+| `website`, `handle`, `email` | **Empty for now; fill these in.** The first one set appears next to the logo on every image, and all of them go at the end of captions. |
+| `cta` | Button text on service, announcement and carousel posts |
+| `logo` | Optional path to a logo file (PNG/SVG/JPG) that replaces the built-in mark and wordmark |
+| `colors` | The brand kit palette. Change a hex here and every image follows. |
 | `defaultHashtags` | Added to every post after the post's own hashtags |
+
+The fonts in `assets/fonts/` come from the brand kit (SIL Open Font License,
+see `FONT-LICENSES.txt`). They cover Western European languages; other
+scripts fall back to a system font.
 
 ## 2. Write posts (`content/posts.json`)
 
-The sample posts cover editing, proofreading, cover design, formatting, a
-writing tip, a quote, a 7-slide carousel and a "now booking" announcement.
-**Check the service names and wording against what you actually offer before
-you post.**
+The sample posts cover editing, cover design, printing, ebook & audiobook, a
+writing tip, a quote, a 7-slide carousel and a brand announcement. They follow
+the brand kit's services and voice. **Check the wording against what you
+actually offer before you post.**
 
 Every post has:
 
 - `id`: the folder name, e.g. `"09-launch-day"`
 - `date`: when to post it (used for `calendar.csv`)
 - `type`: one of the post types below
-- `theme`: `"dark"` (navy), `"light"` (cream) or `"accent"` (terracotta)
+- `theme`: `"midnight"` (dark), `"paper"` (cream) or `"moonlight"` (pale yellow)
 - `caption`: the full caption (Instagram, Facebook and LinkedIn use this)
 - `short`: a shorter version for X, Threads, TikTok, WhatsApp and Pinterest
 - `hashtags`: the post's own hashtags
@@ -81,11 +90,19 @@ Fields for each post type:
 
 | `type` | Fields |
 |---|---|
-| `service` | `eyebrow`, `title`, `subtitle`, `points` (3 short lines), optional `cta` |
+| `service` | `eyebrow`, `title`, `subtitle`, `points` (3 short lines), optional `icon` and `cta` |
 | `tip` | `eyebrow`, `title`, `points` (numbered steps) |
 | `quote` | `quote`, `author`, optional `source` |
 | `announcement` | `eyebrow`, `title`, `body`, optional `cta` |
-| `carousel` | `title`, `subtitle`, `slides` (each `{ "title", "body" }`), optional `outro` |
+| `carousel` | `title`, `subtitle`, `slides` (each `{ "title", "body" }`), optional `eyebrow` and `outro` |
+
+Wrap words in asterisks to set them in the Zilla Slab italic accent, like the
+brand kit's headline: `"Every book starts as a *dream*."`
+
+`icon` is any brand kit icon: book, open-book, editing, design, printing,
+ebook, audiobook, distribution, marketing, pricing, quality, speed, eco,
+support, royalty, upload, check, star, heart, trophy, expert, search, phone,
+user, arrow, download, mail, play, bookshop, isbn, dream (plus menu).
 
 Captions are fitted to each platform's limit: 280 characters on X, 500 on
 Threads and Pinterest, 2,200 on Instagram, and so on. Each platform also gets

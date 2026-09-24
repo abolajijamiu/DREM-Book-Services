@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { captionFor, hashtagsFor, charCount } from '../src/captions.js';
-import { renderHtml, escapeHtml, carouselLength } from '../src/template.js';
+import { renderHtml, escapeHtml, carouselLength, rich, plain } from '../src/template.js';
 import { PLATFORMS, layoutFor } from '../src/formats.js';
 
 const brand = JSON.parse(readFileSync(new URL('../brand.json', import.meta.url)));
@@ -65,6 +65,29 @@ test('every sample post renders for every size', () => {
 
 test('unknown post types are rejected', () => {
   assert.throws(() => renderHtml({ post: { id: 'z', type: 'nope' }, brand, format: { w: 100, h: 100 } }), /unknown type/);
+});
+
+test('*accent* becomes the serif emphasis, escaped first', () => {
+  assert.equal(rich('Every book starts as a *dream*.'), 'Every book starts as a <em>dream</em>.');
+  assert.equal(rich('*<b>*'), '<em>&lt;b&gt;</em>');
+  assert.equal(plain('a *dream*'), 'a dream');
+});
+
+test('pinterest titles drop the accent markers', () => {
+  const { title } = captionFor({ id: 'p', title: 'Hold *your* book', caption: 'c' }, brand, 'pinterest');
+  assert.equal(title, 'Hold your book');
+});
+
+test('unknown themes and icons are rejected with the valid choices', () => {
+  const format = { w: 100, h: 100 };
+  assert.throws(() => renderHtml({ post: { id: 'z', type: 'quote', theme: 'neon' }, brand, format }), /unknown theme.*midnight/);
+  assert.throws(() => renderHtml({ post: { id: 'z', type: 'service', icon: 'nope' }, brand, format }), /Unknown icon.*editing/);
+});
+
+test('old theme names still work', () => {
+  for (const theme of ['dark', 'light', 'accent']) {
+    assert.match(renderHtml({ post: { id: 'a', type: 'quote', quote: 'q', theme }, brand, format: { w: 100, h: 100 } }), /<\/html>$/);
+  }
 });
 
 console.log(`\n${passed} tests passed`);

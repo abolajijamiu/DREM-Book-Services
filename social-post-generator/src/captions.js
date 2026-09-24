@@ -1,6 +1,7 @@
 // Turns a post's copy into a caption tailored to each platform's length
 // limit and hashtag conventions.
 import { PLATFORMS } from './formats.js';
+import { plain } from './template.js';
 
 // How many hashtags each platform's audience expects.
 const HASHTAG_COUNT = {
@@ -58,7 +59,7 @@ export function captionFor(post, brand, platform) {
 
   const result = { text, warnings };
   if (platform === 'pinterest') {
-    result.title = truncate(post.title || post.quote || brand.name, 100);
+    result.title = truncate(plain(post.title || post.quote || brand.name), 100);
   }
   return result;
 }
