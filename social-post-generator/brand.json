@@ -1,0 +1,23 @@
+{
+  "name": "DREM Book Services",
+  "shortName": "DREM",
+  "tagline": "From manuscript to finished book",
+  "website": "",
+  "handle": "",
+  "email": "",
+  "cta": "Send us a message to get started",
+  "logo": "",
+  "colors": {
+    "ink": "#1D2B3A",
+    "paper": "#F7F1E6",
+    "accent": "#C0663F",
+    "gold": "#C9A45C",
+    "muted": "#6B7280",
+    "accentDeep": "#9E4B2B"
+  },
+  "defaultHashtags": [
+    "#DREMBookServices",
+    "#AmWriting",
+    "#SelfPublishing"
+  ]
+}
